@@ -221,4 +221,127 @@ export class DashboardService {
             throw error;
         }
     }
+    async getSummary() {
+        try {
+            const excludedEmails = [
+                'bitturajput2796@gmail.com', 'gambhirmitansh@gmail.com',
+                'dukeplayindia@gmail.com', 'Bitforceinfotech@gmail.com'
+            ];
+
+            const [
+                userCount,
+                walletStats,
+                depositStats,
+                withdrawStats,
+                transferStats,
+                investSummary,
+                platinumSummary,
+                activeInvestorsArr,
+                allUserEmails
+            ] = await Promise.all([
+                UserModel.countDocuments({}),
+                WalletModel.aggregate([
+                    { $match: { email: { $nin: excludedEmails } } },
+                    { $addFields: { numericBalance: { $toDouble: "$balance" } } },
+                    { $group: { _id: null, total: { $sum: "$numericBalance" }, count: { $sum: 1 } } }
+                ]),
+                DepositModel.aggregate([
+                    { $match: { status: { $regex: /^success$/i } } },
+                    {
+                        $group: {
+                            _id: {
+                                month: { $month: { $ifNull: ["$createdAt", new Date()] } },
+                                year: { $year: { $ifNull: ["$createdAt", new Date()] } }
+                            },
+                            total: { $sum: "$amount" }
+                        }
+                    }
+                ]),
+                WithdrawModel.aggregate([
+                    { $match: { status: { $regex: /^success$/i } } },
+                    {
+                        $group: {
+                            _id: {
+                                month: { $month: { $ifNull: ["$createdAt", new Date()] } },
+                                year: { $year: { $ifNull: ["$createdAt", new Date()] } }
+                            },
+                            total: { $sum: { $convert: { input: "$amount", to: "double", onError: 0, onNull: 0 } } }
+                        }
+                    }
+                ]),
+                TransferModel.aggregate([
+                    {
+                        $group: {
+                            _id: {
+                                month: { $month: { $ifNull: ["$createdAt", new Date()] } },
+                                year: { $year: { $ifNull: ["$createdAt", new Date()] } }
+                            },
+                            total: { $sum: { $convert: { input: "$amount", to: "double", onError: 0, onNull: 0 } } }
+                        }
+                    }
+                ]),
+                InvestModel.aggregate([
+                    { $match: { isClosed: false } },
+                    { $group: { _id: null, total: { $sum: { $convert: { input: "$totalAmount", to: "double", onError: 0, onNull: 0 } } } } }
+                ]),
+                PlatinumInvestModel.aggregate([
+                    { $match: { isClosed: false } },
+                    { $group: { _id: null, total: { $sum: { $convert: { input: "$totalAmount", to: "double", onError: 0, onNull: 0 } } } } }
+                ]),
+                Promise.all([
+                    InvestModel.find({ isClosed: false }).distinct('email'),
+                    PlatinumInvestModel.find({ isClosed: false }).distinct('email')
+                ]),
+                UserModel.find({}).distinct('email')
+            ]);
+
+            const monthlyMap: Record<string, any> = {};
+            const processData = (data: any[], key: string) => {
+                data.forEach(item => {
+                    const date = new Date(item._id.year, item._id.month - 1);
+                    const label = date.toLocaleString('default', { month: 'short', year: '2-digit' });
+                    if (!monthlyMap[label]) monthlyMap[label] = { name: label, deposits: 0, withdrawals: 0, transfers: 0 };
+                    monthlyMap[label][key] = item.total;
+                });
+            };
+
+            processData(depositStats, 'deposits');
+            processData(withdrawStats, 'withdrawals');
+            processData(transferStats, 'transfers');
+
+            const chartData = Object.values(monthlyMap).sort((a: any, b: any) => {
+                const dateA = new Date(a.name);
+                const dateB = new Date(b.name);
+                return dateA.getTime() - dateB.getTime();
+            });
+
+            const activeSet = new Set([...activeInvestorsArr[0], ...activeInvestorsArr[1]]);
+            const normalTotal = investSummary[0]?.total || 0;
+            const platinumTotal = platinumSummary[0]?.total || 0;
+
+            return {
+                status: "success",
+                data: {
+                    stats: {
+                        totalUsers: userCount,
+                        walletBalance: walletStats[0]?.total || 0,
+                        totalDeposits: depositStats.reduce((sum, curr) => sum + curr.total, 0),
+                        totalWithdrawals: withdrawStats.reduce((sum, curr) => sum + curr.total, 0),
+                        totalTransfers: transferStats.reduce((sum, curr) => sum + curr.total, 0),
+                        normalInvestment: normalTotal,
+                        platinumInvestment: platinumTotal,
+                        activeInvestorsCount: activeSet.size,
+                        inactiveInvestorsCount: Math.max(0, allUserEmails.length - activeSet.size)
+                    },
+                    chartData,
+                    pieData: {
+                        labels: ['Normal', 'Platinum'],
+                        series: [normalTotal, platinumTotal]
+                    }
+                }
+            };
+        } catch (error) {
+            throw error;
+        }
+    }
 }

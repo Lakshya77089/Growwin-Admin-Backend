@@ -19,4 +19,7 @@ router.get("/platinum/admin/investors", dashboardController.getPlatinumInvestors
 router.get("/email/active-investors", dashboardController.getActiveInvestors.bind(dashboardController));
 router.get("/email/inactive-investors", dashboardController.getInactiveInvestors.bind(dashboardController));
 
+// Unified Summary Route for extreme performance
+router.get("/dashboard/summary", dashboardController.getSummary.bind(dashboardController));
+
 export default router;

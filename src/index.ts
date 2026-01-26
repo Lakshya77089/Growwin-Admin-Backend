@@ -26,7 +26,7 @@ app.use((req, res, next) => {
 
 // Routes
 app.use("/users", userRoutes);
-app.use("/", dashboardRoutes);
+app.use("/api", dashboardRoutes);
 
 app.get("/health", (req, res) => {
     res.json({ status: "ok" });
