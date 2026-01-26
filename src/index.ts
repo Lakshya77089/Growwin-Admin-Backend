@@ -14,7 +14,7 @@ app.use(express.json());
 
 // Routes
 app.use("/api/users", userRoutes);
-app.use("/api", dashboardRoutes);
+app.use("/", dashboardRoutes);
 
 app.get("/health", (req, res) => {
     res.json({ status: "ok" });
