@@ -242,7 +242,7 @@ export class DashboardService {
                 UserModel.countDocuments({}),
                 WalletModel.aggregate([
                     { $match: { email: { $nin: excludedEmails } } },
-                    { $addFields: { numericBalance: { $toDouble: "$balance" } } },
+                    { $addFields: { numericBalance: { $convert: { input: "$balance", to: "double", onError: 0, onNull: 0 } } } },
                     { $group: { _id: null, total: { $sum: "$numericBalance" }, count: { $sum: 1 } } }
                 ]),
                 DepositModel.aggregate([
@@ -253,7 +253,7 @@ export class DashboardService {
                                 month: { $month: { $ifNull: ["$createdAt", new Date()] } },
                                 year: { $year: { $ifNull: ["$createdAt", new Date()] } }
                             },
-                            total: { $sum: "$amount" }
+                            total: { $sum: { $convert: { input: "$amount", to: "double", onError: 0, onNull: 0 } } }
                         }
                     }
                 ]),
