@@ -22,4 +22,22 @@ router.get("/email/inactive-investors", dashboardController.getInactiveInvestors
 // Unified Summary Route for extreme performance
 router.get("/dashboard/summary", dashboardController.getSummary.bind(dashboardController));
 
+// Administrative Actions
+router.get("/kyc/processing", dashboardController.getKYCs.bind(dashboardController));
+router.put("/user/toggleActiveStatusByEmail", dashboardController.toggleUserStatus.bind(dashboardController));
+router.put("/user/editUser/:email", dashboardController.editUser.bind(dashboardController));
+router.put("/invest/toggle-investment-allowed/:email", dashboardController.toggleInvestmentAllowed.bind(dashboardController));
+router.patch("/kyc/verify/:email", dashboardController.verifyKYC.bind(dashboardController));
+router.post("/withdraw/updateWithdraw/:id", dashboardController.updateWithdrawal.bind(dashboardController));
+router.get("/wallet/walletbalance/:email", dashboardController.getWalletBalancePersonal.bind(dashboardController));
+router.post("/wallet/updateWallet", dashboardController.updateWallet.bind(dashboardController));
+router.get("/referal/getReferal/:id", dashboardController.getReferral.bind(dashboardController));
+router.get("/user/getUser/:email", dashboardController.getUser.bind(dashboardController));
+router.get("/invest/get-invest/:email", dashboardController.getInvest.bind(dashboardController));
+router.get("/platinum/get-invest/:email", dashboardController.getPlatinumInvest.bind(dashboardController));
+router.get("/subTeam/getSubTeamall", dashboardController.getSubTeamall.bind(dashboardController));
+router.get("/referalIncome/getReferalIncomeAll", dashboardController.getReferalIncomeAll.bind(dashboardController));
+router.get("/admin/team-details", dashboardController.getTeamDetailsAdmin.bind(dashboardController));
+router.post("/auth/login", dashboardController.login.bind(dashboardController));
+
 export default router;

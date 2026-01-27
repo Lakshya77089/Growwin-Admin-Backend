@@ -6,6 +6,8 @@ const userSchema = new mongoose.Schema({
     number: { type: String },
     role: { type: String, default: "user" },
     active: { type: Boolean, default: true },
+    investmentAllowed: { type: Boolean, default: true },
+    refree: { type: String },
 }, { timestamps: true, collection: "Users" }); // Explicit collection name
 
 const UserModel = mongoose.model("User", userSchema);

@@ -7,28 +7,36 @@ const dashboardService = new DashboardService();
 export class DashboardController {
     async getAllUsers(req: Request, res: Response) {
         try {
-            const users = await dashboardService.getAllUsers();
-            res.json(users);
+            const page = parseInt(req.query["page"] as string) || 1;
+            const limit = parseInt(req.query["limit"] as string) || 20;
+            const filter = (req.query["filter"] as string) || 'all';
+            const search = (req.query["search"] as string) || '';
+            const data = await dashboardService.getAllUsers(page, limit, filter, search);
+            res.json(data);
         } catch (error) {
-            res.status(500).json({ message: "Error fetching all users", error });
+            res.status(500).json({ status: "error", message: "Error fetching all users", error });
         }
     }
 
     async getDeposits(req: Request, res: Response) {
         try {
-            const deposits = await dashboardService.getDeposits();
+            const page = parseInt(req.query["page"] as string) || 1;
+            const limit = parseInt(req.query["limit"] as string) || 20;
+            const deposits = await dashboardService.getDeposits(page, limit);
             res.json(deposits);
         } catch (error) {
-            res.status(500).json({ message: "Error fetching deposits", error });
+            res.status(500).json({ status: "error", message: "Error fetching deposits", error });
         }
     }
 
     async getWithdrawals(req: Request, res: Response) {
         try {
-            const withdrawals = await dashboardService.getWithdrawals();
+            const page = parseInt(req.query["page"] as string) || 1;
+            const limit = parseInt(req.query["limit"] as string) || 20;
+            const withdrawals = await dashboardService.getWithdrawals(page, limit);
             res.json(withdrawals);
         } catch (error) {
-            res.status(500).json({ message: "Error fetching withdrawals", error });
+            res.status(500).json({ status: "error", message: "Error fetching withdrawals", error });
         }
     }
 
@@ -97,6 +105,179 @@ export class DashboardController {
                 message: "Error fetching dashboard summary",
                 error: error.message || "Unknown error occurred"
             });
+        }
+    }
+
+    async getKYCs(req: Request, res: Response) {
+        try {
+            const page = parseInt(req.query["page"] as string) || 1;
+            const limit = parseInt(req.query["limit"] as string) || 20;
+            const data = await dashboardService.getKYCs(page, limit);
+            res.json(data);
+        } catch (error) {
+            res.status(500).json({ status: "error", message: "Error fetching KYCs", error });
+        }
+    }
+
+    async toggleUserStatus(req: Request, res: Response) {
+        try {
+            const { email, active } = req.body;
+            const updated = await dashboardService.toggleUserStatus(email, active);
+            res.json({ status: "success", data: updated });
+        } catch (error) {
+            res.status(500).json({ message: "Error toggling user status", error });
+        }
+    }
+
+    async editUser(req: Request, res: Response) {
+        try {
+            const { email } = req.params;
+            const { name, number } = req.body;
+            const updated = await dashboardService.editUser(email as string, name, number);
+            res.json({ status: "success", user: updated });
+        } catch (error) {
+            res.status(500).json({ message: "Error editing user", error });
+        }
+    }
+
+    async toggleInvestmentAllowed(req: Request, res: Response) {
+        try {
+            const { email } = req.params;
+            const updated = await dashboardService.toggleInvestmentAllowed(email as string);
+            res.json({ status: "success", data: updated });
+        } catch (error) {
+            res.status(500).json({ message: "Error toggling investment status", error });
+        }
+    }
+
+    async verifyKYC(req: Request, res: Response) {
+        try {
+            const { email } = req.params;
+            const { status } = req.body;
+            const updated = await dashboardService.verifyKYC(email as string, status);
+            res.json({ status: "success", data: updated });
+        } catch (error) {
+            res.status(500).json({ message: "Error verifying KYC", error });
+        }
+    }
+
+    async updateWithdrawal(req: Request, res: Response) {
+        try {
+            const { id } = req.params;
+            const { withdrawStatus } = req.body; // Frontend uses withdrawStatus field
+            const updated = await dashboardService.updateWithdrawal(id as string, withdrawStatus);
+            res.json({ status: "success", data: { Withdraw: updated } });
+        } catch (error) {
+            res.status(500).json({ message: "Error updating withdrawal", error });
+        }
+    }
+
+    async getWalletBalancePersonal(req: Request, res: Response) {
+        try {
+            const { email } = req.params;
+            const wallet = await dashboardService.getWalletBalancePersonal(email as string);
+            res.json({ status: "success", wallet });
+        } catch (error) {
+            res.status(500).json({ message: "Error fetching user wallet balance", error });
+        }
+    }
+
+    async updateWallet(req: Request, res: Response) {
+        try {
+            const { email, amount } = req.body;
+            const updated = await dashboardService.updateWallet(email, amount);
+            res.json({ status: "success", data: { Withdraw: updated } }); // Matches some old logic expectations
+        } catch (error) {
+            res.status(500).json({ message: "Error updating wallet", error });
+        }
+    }
+
+    async getReferral(req: Request, res: Response) {
+        try {
+            const { id } = req.params;
+            const referrer = await dashboardService.getReferral(id as string);
+            res.json({ status: "success", email: referrer }); // Matches frontend expectation of data.email.email
+        } catch (error) {
+            res.status(500).json({ status: "error", message: "Error fetching referral", error });
+        }
+    }
+
+    async getUser(req: Request, res: Response) {
+        try {
+            const { email } = req.params;
+            const user = await dashboardService.getUser(email as string);
+            res.json({ status: "success", user });
+        } catch (error) {
+            res.status(500).json({ status: "error", message: "Error fetching user", error });
+        }
+    }
+
+    async getInvest(req: Request, res: Response) {
+        try {
+            const { email } = req.params;
+            const invest = await dashboardService.getInvest(email as string);
+            if (!invest) {
+                return res.json({ status: "error", message: "noinvestment" });
+            }
+            res.json({ status: "success", Invest: invest });
+        } catch (error) {
+            res.status(500).json({ status: "error", message: "Error fetching investment", error });
+        }
+    }
+
+    async getPlatinumInvest(req: Request, res: Response) {
+        try {
+            const { email } = req.params;
+            const invest = await dashboardService.getPlatinumInvest(email as string);
+            if (!invest) {
+                return res.json({ status: "error", message: "noinvestment" });
+            }
+            res.json({ status: "success", Invest: invest });
+        } catch (error) {
+            res.status(500).json({ status: "error", message: "Error fetching platinum investment", error });
+        }
+    }
+
+    async getSubTeamall(req: Request, res: Response) {
+        try {
+            const page = parseInt(req.query["page"] as string) || 1;
+            const limit = parseInt(req.query["limit"] as string) || 20;
+            const data = await dashboardService.getSubTeamall(page, limit);
+            res.json({ status: "success", ...data });
+        } catch (error) {
+            res.status(500).json({ status: "error", message: "Error fetching sub-team data", error });
+        }
+    }
+
+    async getReferalIncomeAll(req: Request, res: Response) {
+        try {
+            const page = parseInt(req.query["page"] as string) || 1;
+            const limit = parseInt(req.query["limit"] as string) || 20;
+            const data = await dashboardService.getReferalIncomeAll(page, limit);
+            res.json({ status: "success", ...data });
+        } catch (error) {
+            res.status(500).json({ status: "error", message: "Error fetching referral income data", error });
+        }
+    }
+
+    async login(req: Request, res: Response) {
+        try {
+            const { email, password } = req.body;
+            const result = await dashboardService.login(email, password);
+            res.json(result);
+        } catch (error) {
+            res.status(500).json({ message: "Error during login", error });
+        }
+    }
+
+    async getTeamDetailsAdmin(req: Request, res: Response) {
+        try {
+            const page = parseInt(req.query["page"] as string) || 1;
+            const limit = parseInt(req.query["limit"] as string) || 20;
+            const data = await dashboardService.getTeamDetailsAdmin(page, limit);
+            res.json(data);
+        } catch (error) {
+            res.status(500).json({ status: "error", message: "Error fetching team details", error });
         }
     }
 }
