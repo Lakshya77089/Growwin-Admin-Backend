@@ -280,4 +280,88 @@ export class DashboardController {
             res.status(500).json({ status: "error", message: "Error fetching team details", error });
         }
     }
+
+    async getAllTeamIncomePaginated(req: Request, res: Response) {
+        try {
+            const page = parseInt(req.query["page"] as string) || 1;
+            const limit = parseInt(req.query["limit"] as string) || 20;
+            const searchTerm = (req.query["searchTerm"] as string) || '';
+            const startDate = (req.query["startDate"] as string) || '';
+            const endDate = (req.query["endDate"] as string) || '';
+            const data = await dashboardService.getAllTeamIncomePaginated(page, limit, searchTerm, startDate, endDate);
+            res.json(data);
+        } catch (error) {
+            res.status(500).json({ status: "error", message: "Error fetching team income data", error });
+        }
+    }
+
+    async getAllPlatinumTeamIncome(req: Request, res: Response) {
+        try {
+            const page = parseInt(req.query["page"] as string) || 1;
+            const limit = parseInt(req.query["limit"] as string) || 10;
+            const data = await dashboardService.getAllPlatinumTeamIncome(page, limit);
+            res.json(data);
+        } catch (error) {
+            res.status(500).json({ status: "error", message: "Error fetching platinum team income data", error });
+        }
+    }
+
+    async getAllSelfIncomePaginated(req: Request, res: Response) {
+        try {
+            const page = parseInt(req.query["page"] as string) || 1;
+            const limit = parseInt(req.query["limit"] as string) || 20;
+            const searchTerm = (req.query["searchTerm"] as string) || '';
+            const startDate = (req.query["startDate"] as string) || '';
+            const endDate = (req.query["endDate"] as string) || '';
+            const isPlatinum = req.query["isPlatinum"] === "true";
+            const data = await dashboardService.getAllSelfIncomePaginated(page, limit, searchTerm, startDate, endDate, req.query["isPlatinum"] !== undefined ? isPlatinum : undefined);
+            res.json(data);
+        } catch (error) {
+            res.status(500).json({ status: "error", message: "Error fetching self income data", error });
+        }
+    }
+
+    async updateSelfIncome(req: Request, res: Response) {
+        try {
+            const { email, income, date } = req.body;
+            const result = await dashboardService.updateSelfIncome(email, income, date);
+            res.json({ status: "success", result });
+        } catch (error) {
+            res.status(500).json({ status: "error", message: "Error updating self income", error });
+        }
+    }
+
+    async updatePlatinumIncome(req: Request, res: Response) {
+        try {
+            const { email, income, date } = req.body;
+            const result = await dashboardService.updatePlatinumIncome(email, income, date);
+            res.json({ status: "success", result });
+        } catch (error) {
+            res.status(500).json({ status: "error", message: "Error updating platinum income", error });
+        }
+    }
+
+    async getAllReferalIncomePaginated(req: Request, res: Response) {
+        try {
+            const page = parseInt(req.query["page"] as string) || 1;
+            const limit = parseInt(req.query["limit"] as string) || 20;
+            const searchTerm = (req.query["searchTerm"] as string) || '';
+            const startDate = (req.query["startDate"] as string) || '';
+            const endDate = (req.query["endDate"] as string) || '';
+            const data = await dashboardService.getAllReferalIncomePaginated(page, limit, searchTerm, startDate, endDate);
+            res.json(data);
+        } catch (error) {
+            res.status(500).json({ status: "error", message: "Error fetching referral income data", error });
+        }
+    }
+
+    async updateReferalIncome(req: Request, res: Response) {
+        try {
+            const { owner, member, income, level, date } = req.body;
+            const result = await dashboardService.updateReferalIncome(owner, member, income, level, date);
+            res.json({ status: "success", result });
+        } catch (error) {
+            res.status(500).json({ status: "error", message: "Error updating referral income", error });
+        }
+    }
 }

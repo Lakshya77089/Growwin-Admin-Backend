@@ -7,9 +7,6 @@ import dashboardRoutes from "./routes/dashboard.routes.js";
 const app = express();
 const PORT = process.env["PORT"] || 3000;
 
-// Connect to Database
-connectDB();
-
 app.use(express.json());
 
 // CORS Middleware
@@ -32,6 +29,17 @@ app.get("/health", (req, res) => {
     res.json({ status: "ok" });
 });
 
-app.listen(PORT, () => {
-    console.log(`Server is running on http://localhost:${PORT}`);
-});
+// Connect to Database and Start Server
+const startServer = async () => {
+    try {
+        await connectDB();
+
+        app.listen(PORT, () => {
+            console.log(`Server is running on http://localhost:${PORT}`);
+        });
+    } catch (error) {
+        console.error("Failed to start server:", error);
+    }
+};
+
+startServer();

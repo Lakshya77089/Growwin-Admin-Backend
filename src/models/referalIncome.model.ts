@@ -6,7 +6,7 @@ const referalIncomeSchema = new mongoose.Schema({
     ownerReferal: { type: String, required: true },
     referalIncome: { type: String, required: true },
     level: { type: String, required: true },
-}, { timestamps: true, collection: "referalIncomes" });
+}, { timestamps: true, collection: "referalincomes" });
 
 const ReferalIncomeModel = mongoose.model("ReferalIncome", referalIncomeSchema);
 export default ReferalIncomeModel;

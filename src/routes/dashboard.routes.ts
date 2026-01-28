@@ -1,4 +1,5 @@
 import { Router } from "express";
+import mongoose from "mongoose";
 import { DashboardController } from "../controllers/dashboard.controller.js";
 
 const router = Router();
@@ -36,8 +37,14 @@ router.get("/user/getUser/:email", dashboardController.getUser.bind(dashboardCon
 router.get("/invest/get-invest/:email", dashboardController.getInvest.bind(dashboardController));
 router.get("/platinum/get-invest/:email", dashboardController.getPlatinumInvest.bind(dashboardController));
 router.get("/subTeam/getSubTeamall", dashboardController.getSubTeamall.bind(dashboardController));
-router.get("/referalIncome/getReferalIncomeAll", dashboardController.getReferalIncomeAll.bind(dashboardController));
+router.get("/referalIncome/getReferalIncomeAll", dashboardController.getAllReferalIncomePaginated.bind(dashboardController));
+router.post("/referalIncome/admin/updateReferalIncome", dashboardController.updateReferalIncome.bind(dashboardController));
 router.get("/admin/team-details", dashboardController.getTeamDetailsAdmin.bind(dashboardController));
+router.get("/teamincome/admin/getAllTeamIncomePaginated", dashboardController.getAllTeamIncomePaginated.bind(dashboardController));
+router.get("/platinum/admin/team-income", dashboardController.getAllPlatinumTeamIncome.bind(dashboardController));
+router.get("/income/admin/getAllIncomePaginated", dashboardController.getAllSelfIncomePaginated.bind(dashboardController));
+router.post("/income/admin/updateSelfIncome", dashboardController.updateSelfIncome.bind(dashboardController));
+router.post("/platinum/admin/updatePlatinumIncome", dashboardController.updatePlatinumIncome.bind(dashboardController));
 router.post("/auth/login", dashboardController.login.bind(dashboardController));
 
 export default router;

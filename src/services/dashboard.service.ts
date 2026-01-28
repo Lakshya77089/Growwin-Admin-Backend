@@ -9,6 +9,10 @@ import KYCModel from "../models/kyc.model.js";
 import ReferalModel from "../models/referal.model.js";
 import SubteamModel from "../models/subteam.model.js";
 import ReferalIncomeModel from "../models/referalIncome.model.js";
+import TeamIncomeModel from "../models/teamIncome.model.js";
+import PlatinumTeamIncomeModel from "../models/platinumTeamIncome.model.js";
+import IncomeModel from "../models/income.model.js";
+import PlatinumIncomeModel from "../models/platinumIncome.model.js";
 
 export class DashboardService {
     async getAllUsers(page: number = 1, limit: number = 20, filter: string = 'all', search: string = '') {
@@ -680,6 +684,391 @@ export class DashboardService {
                 }
             };
         } catch (error) {
+            throw error;
+        }
+    }
+
+    async getAllPlatinumTeamIncome(page: number = 1, limit: number = 20) {
+        try {
+            const skip = (page - 1) * limit;
+            const total = await PlatinumTeamIncomeModel.countDocuments();
+            const teamIncomeData = await PlatinumTeamIncomeModel.find()
+                .sort({ createdAt: -1 })
+                .skip(skip)
+                .limit(limit)
+                .lean();
+
+            const totalPages = Math.ceil(total / limit);
+
+            return {
+                status: 'success',
+                cached: false,
+                data: {
+                    teamIncome: teamIncomeData,
+                    pagination: {
+                        currentPage: page,
+                        totalPages,
+                        totalRecords: total,
+                        limit,
+                        hasNextPage: page < totalPages,
+                        hasPrevPage: page > 1
+                    }
+                }
+            };
+        } catch (error) {
+            console.error("Error in getAllPlatinumTeamIncome:", error);
+            throw error;
+        }
+    }
+
+    async getAllTeamIncomePaginated(page: number = 1, limit: number = 20, searchTerm: string = '', startDate: string = '', endDate: string = '') {
+        try {
+            const skip = (page - 1) * limit;
+
+            // Build date filter
+            const dateMatch: any = {};
+            if (startDate && endDate) {
+                dateMatch.createdAt = {
+                    $gte: new Date(startDate),
+                    $lte: new Date(new Date(endDate).setHours(23, 59, 59, 999))
+                };
+            }
+
+            // Build search filter
+            const searchMatch: any = {};
+            if (searchTerm) {
+                const searchRegex = new RegExp(searchTerm, 'i');
+                searchMatch.$or = [
+                    { emailOwner: searchRegex },
+                    { emailMember: searchRegex }
+                ];
+            }
+
+            // Combine filters
+            const matchQuery = { ...dateMatch, ...searchMatch };
+
+            // Count total (simplified count for both)
+            const [regularCount, platinumCount] = await Promise.all([
+                TeamIncomeModel.countDocuments({ ...matchQuery, $or: [{ income: { $nin: ['0', '0.00', null] } }, { Income: { $nin: ['0', '0.00', null] } }] }),
+                PlatinumTeamIncomeModel.countDocuments({ ...matchQuery, $or: [{ income: { $nin: ['0', '0.00', null] } }, { Income: { $nin: ['0', '0.00', null] } }] })
+            ]);
+            const total = regularCount + platinumCount;
+
+            // Aggregation pipeline to combine and paginate
+            const pipeline: any[] = [
+                {
+                    $match: {
+                        ...matchQuery,
+                        Income: { $nin: ['0', '0.00', null, ''] }
+                    }
+                },
+                { $addFields: { isPlatinum: false } },
+                {
+                    $unionWith: {
+                        coll: PlatinumTeamIncomeModel.collection.name,
+                        pipeline: [
+                            {
+                                $match: {
+                                    ...matchQuery,
+                                    income: { $nin: ['0', '0.00', null, ''] }
+                                }
+                            },
+                            { $addFields: { isPlatinum: true } }
+                        ]
+                    }
+                },
+                { $sort: { createdAt: -1 } },
+                { $skip: skip },
+                { $limit: limit },
+                {
+                    $lookup: {
+                        from: SubteamModel.collection.name,
+                        let: { owner: '$emailOwner', member: '$emailMember' },
+                        pipeline: [
+                            {
+                                $match: {
+                                    $expr: {
+                                        $and: [
+                                            { $eq: ['$owner', '$$owner'] },
+                                            { $eq: ['$member', '$$member'] }
+                                        ]
+                                    }
+                                }
+                            },
+                            { $project: { level: 1, _id: 0 } }
+                        ],
+                        as: 'subteam'
+                    }
+                },
+                {
+                    $addFields: {
+                        level: { $ifNull: [{ $arrayElemAt: ['$subteam.level', 0] }, 0] },
+                        tempIncome: { $ifNull: ["$Income", "$income"] }
+                    }
+                },
+                {
+                    $addFields: {
+                        Income: {
+                            $round: [
+                                { $convert: { input: "$tempIncome", to: "double", onError: 0, onNull: 0 } },
+                                2
+                            ]
+                        }
+                    }
+                },
+                { $project: { income: 0, tempIncome: 0, subteam: 0 } }
+            ];
+
+            const docs = await TeamIncomeModel.aggregate(pipeline).exec();
+
+            return {
+                status: 'success',
+                page,
+                limit,
+                total,
+                totalPages: Math.ceil(total / limit),
+                teamIncome: docs
+            };
+        } catch (error: any) {
+            console.error("Error in getAllTeamIncomePaginated:", error);
+            if (error.codeName === 'CommandNotFound') {
+                console.error("Aggregation command failed - check MongoDB version or permissions");
+            }
+            throw {
+                message: error.message,
+                stack: error.stack,
+                details: error
+            };
+        }
+    }
+
+    async getAllSelfIncomePaginated(page: number = 1, limit: number = 20, searchTerm: string = '', startDate: string = '', endDate: string = '', isPlatinumFilter?: boolean) {
+        try {
+            const skip = (page - 1) * limit;
+
+            // Build date filter
+            const dateMatch: any = {};
+            if (startDate && endDate) {
+                dateMatch.createdAt = {
+                    $gte: new Date(startDate),
+                    $lte: new Date(new Date(endDate).setHours(23, 59, 59, 999))
+                };
+            }
+
+            // Build search filter
+            const searchMatch: any = {};
+            if (searchTerm) {
+                const searchRegex = new RegExp(searchTerm, 'i');
+                searchMatch.email = searchRegex;
+            }
+
+            // Combine filters
+            const matchQuery = { ...dateMatch, ...searchMatch };
+
+            // Count total
+            let regularCount = 0;
+            let platinumCount = 0;
+
+            if (isPlatinumFilter === undefined || isPlatinumFilter === false) {
+                regularCount = await IncomeModel.countDocuments({ ...matchQuery, income: { $nin: ['0', '0.00', null, ''] } });
+            }
+            if (isPlatinumFilter === undefined || isPlatinumFilter === true) {
+                platinumCount = await PlatinumIncomeModel.countDocuments({ ...matchQuery, income: { $nin: ['0', '0.00', null, ''] } });
+            }
+            const total = regularCount + platinumCount;
+
+            // Aggregation pipeline
+            const pipeline: any[] = [];
+
+            if (isPlatinumFilter === true) {
+                // If only platinum is requested, start with an empty match on IncomeModel
+                pipeline.push({ $match: { _id: { $exists: false } } });
+                pipeline.push({
+                    $unionWith: {
+                        coll: PlatinumIncomeModel.collection.name,
+                        pipeline: [
+                            {
+                                $match: {
+                                    ...matchQuery,
+                                    income: { $nin: ['0', '0.00', null, ''] }
+                                }
+                            },
+                            { $addFields: { isPlatinum: true } }
+                        ]
+                    }
+                });
+            } else {
+                // Start with regular income
+                pipeline.push({
+                    $match: {
+                        ...matchQuery,
+                        income: { $nin: ['0', '0.00', null, ''] }
+                    }
+                });
+                pipeline.push({ $addFields: { isPlatinum: false } });
+
+                if (isPlatinumFilter === undefined) {
+                    // Unified view
+                    pipeline.push({
+                        $unionWith: {
+                            coll: PlatinumIncomeModel.collection.name,
+                            pipeline: [
+                                {
+                                    $match: {
+                                        ...matchQuery,
+                                        income: { $nin: ['0', '0.00', null, ''] }
+                                    }
+                                },
+                                { $addFields: { isPlatinum: true } }
+                            ]
+                        }
+                    });
+                }
+            }
+
+            pipeline.push(
+                { $sort: { createdAt: -1 } },
+                { $skip: skip },
+                { $limit: limit },
+                {
+                    $addFields: {
+                        Income: {
+                            $round: [
+                                { $convert: { input: "$income", to: "double", onError: 0, onNull: 0 } },
+                                2
+                            ]
+                        }
+                    }
+                },
+                { $project: { income: 0 } }
+            );
+
+            const docs = await IncomeModel.aggregate(pipeline).exec();
+
+            return {
+                status: 'success',
+                page,
+                limit,
+                total,
+                totalPages: Math.ceil(total / limit),
+                income: docs
+            };
+        } catch (error: any) {
+            console.error("Error in getAllSelfIncomePaginated:", error);
+            throw {
+                message: error.message,
+                stack: error.stack,
+                details: error
+            };
+        }
+    }
+
+    async updateSelfIncome(email: string, income: string, createdAt: string) {
+        try {
+            const result = await IncomeModel.updateOne(
+                { email, createdAt: new Date(createdAt) },
+                { $set: { income: income.toString() } }
+            );
+            return result;
+        } catch (error) {
+            console.error("Error in updateSelfIncome:", error);
+            throw error;
+        }
+    }
+
+    async updatePlatinumIncome(email: string, income: string, createdAt: string) {
+        try {
+            const result = await PlatinumIncomeModel.updateOne(
+                { email, createdAt: new Date(createdAt) },
+                { $set: { income: income.toString() } }
+            );
+            return result;
+        } catch (error) {
+            console.error("Error in updatePlatinumIncome:", error);
+            throw error;
+        }
+    }
+
+    async getAllReferalIncomePaginated(page: number = 1, limit: number = 20, searchTerm: string = '', startDate: string = '', endDate: string = '') {
+        try {
+            const skip = (page - 1) * limit;
+
+            const dateMatch: any = {};
+            if (startDate || endDate) {
+                dateMatch.createdAt = {};
+                if (startDate) dateMatch.createdAt.$gte = new Date(startDate);
+                if (endDate) dateMatch.createdAt.$lte = new Date(endDate);
+            }
+
+            const searchMatch = searchTerm ? {
+                $or: [
+                    { owner: { $regex: searchTerm, $options: 'i' } },
+                    { member: { $regex: searchTerm, $options: 'i' } }
+                ]
+            } : {};
+
+            const matchQuery = { ...dateMatch, ...searchMatch };
+
+            // Count total
+            const total = await ReferalIncomeModel.countDocuments({
+                ...matchQuery,
+                referalIncome: { $nin: ['0', '0.00', null, ''] }
+            });
+
+            // Aggregation pipeline
+            const pipeline: any[] = [
+                {
+                    $match: {
+                        ...matchQuery,
+                        referalIncome: { $nin: ['0', '0.00', null, ''] }
+                    }
+                },
+                { $sort: { createdAt: -1 } },
+                { $skip: skip },
+                { $limit: limit },
+                {
+                    $addFields: {
+                        income: {
+                            $round: [
+                                { $convert: { input: "$referalIncome", to: "double", onError: 0, onNull: 0 } },
+                                2
+                            ]
+                        },
+                        level: { $ifNull: ["$level", "N/A"] }
+                    }
+                },
+                { $project: { referalIncome: 0 } }
+            ];
+
+            const docs = await ReferalIncomeModel.aggregate(pipeline).exec();
+
+            return {
+                status: 'success',
+                page,
+                limit,
+                total,
+                totalPages: Math.ceil(total / limit),
+                referal: docs
+            };
+        } catch (error: any) {
+            console.error("Error in getAllReferalIncomePaginated:", error);
+            throw {
+                message: error.message,
+                stack: error.stack,
+                details: error
+            };
+        }
+    }
+
+    async updateReferalIncome(owner: string, member: string, income: string, level: string, createdAt: string) {
+        try {
+            const result = await ReferalIncomeModel.updateOne(
+                { owner, member, level, createdAt: new Date(createdAt) },
+                { $set: { referalIncome: income.toString() } }
+            );
+            return result;
+        } catch (error) {
+            console.error("Error in updateReferalIncome:", error);
             throw error;
         }
     }
