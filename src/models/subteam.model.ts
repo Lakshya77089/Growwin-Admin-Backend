@@ -7,6 +7,7 @@ const subteamSchema = new mongoose.Schema({
     number: { type: String },
     level: { type: Number },
 }, { timestamps: true, collection: "SubTeams" });
+subteamSchema.index({ owner: 1 });
 
 const SubteamModel = mongoose.model("Subteam", subteamSchema);
 export default SubteamModel;

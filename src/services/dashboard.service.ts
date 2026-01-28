@@ -17,6 +17,10 @@ import WalletHistoryModel from "../models/walletHistory.model.js";
 import GwcCoinModel from "../models/gwcCoin.model.js";
 import GwcCoinHistoryModel from "../models/gwcHistory.model.js";
 import CoinValueModel from "../models/coinValue.model.js";
+import InvestmentLotModel from "../models/investmentLot.model.js";
+import ShiftHistoryModel from "../models/shiftHistory.model.js";
+import { Decimal } from 'decimal.js';
+import { incomeSecurityGuard } from "../utils/incomeSecurity.js";
 
 export class DashboardService {
     async getAllUsers(page: number = 1, limit: number = 20, filter: string = 'all', search: string = '') {
@@ -1313,6 +1317,831 @@ export class DashboardService {
 
             return updatedUserCoins;
         } catch (error) {
+            throw error;
+        }
+    }
+
+    async getRealTimeIncomeStats() {
+        try {
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const tomorrow = new Date(today);
+            tomorrow.setDate(tomorrow.getDate() + 1);
+
+            const [normalIncome, platinumIncome, teamIncome, platinumTeamIncome] = await Promise.all([
+                IncomeModel.aggregate([
+                    { $match: { createdAt: { $gte: today, $lt: tomorrow } } },
+                    { $group: { _id: null, total: { $sum: { $toDouble: "$income" } }, count: { $sum: 1 } } }
+                ]),
+                PlatinumIncomeModel.aggregate([
+                    { $match: { createdAt: { $gte: today, $lt: tomorrow } } },
+                    { $group: { _id: null, total: { $sum: { $toDouble: "$income" } }, count: { $sum: 1 } } }
+                ]),
+                TeamIncomeModel.aggregate([
+                    { $match: { createdAt: { $gte: today, $lt: tomorrow } } },
+                    { $group: { _id: null, total: { $sum: { $toDouble: "$Income" } }, count: { $sum: 1 } } }
+                ]),
+                PlatinumTeamIncomeModel.aggregate([
+                    { $match: { createdAt: { $gte: today, $lt: tomorrow } } },
+                    { $group: { _id: null, total: { $sum: { $toDouble: "$income" } }, count: { $sum: 1 } } }
+                ])
+            ]);
+
+            return {
+                normalIncome: normalIncome[0]?.total || 0,
+                normalIncomeCount: normalIncome[0]?.count || 0,
+                platinumIncome: platinumIncome[0]?.total || 0,
+                platinumIncomeCount: platinumIncome[0]?.count || 0,
+                teamIncome: teamIncome[0]?.total || 0,
+                teamIncomeCount: teamIncome[0]?.count || 0,
+                platinumTeamIncome: platinumTeamIncome[0]?.total || 0,
+                platinumTeamIncomeCount: platinumTeamIncome[0]?.count || 0,
+                totalIncome: (normalIncome[0]?.total || 0) + (platinumIncome[0]?.total || 0) +
+                    (teamIncome[0]?.total || 0) + (platinumTeamIncome[0]?.total || 0),
+                totalTransactions: (normalIncome[0]?.count || 0) + (platinumIncome[0]?.count || 0) +
+                    (teamIncome[0]?.count || 0) + (platinumTeamIncome[0]?.count || 0),
+                timestamp: new Date()
+            };
+        } catch (error) {
+            console.error("Error in getRealTimeIncomeStats:", error);
+            throw error;
+        }
+    }
+
+    async getIncomeProjections(params: any) {
+        try {
+            const period = params.period || 'weekly';
+            const page = parseInt(params.page) || 1;
+            const limit = parseInt(params.limit) || 20;
+
+            const dateRange = this.calculateDateRange(period, params);
+
+            // Calculate projections
+            const { projections, summary } = await this.calculateIncomeProjections({
+                dateRange,
+                planType: params.planType || 'all',
+                emailFilter: params.email,
+                search: params.search
+            });
+
+            // Apply pagination on already calculated projections
+            const total = projections.length;
+            const totalPages = Math.ceil(total / limit);
+            const startIndex = (page - 1) * limit;
+            const paginatedData = projections.slice(startIndex, startIndex + limit);
+
+            return {
+                data: paginatedData,
+                total,
+                page,
+                totalPages,
+                summary,
+                period: {
+                    type: period,
+                    startDate: dateRange.startDate,
+                    endDate: dateRange.endDate
+                }
+            };
+        } catch (error) {
+            console.error("Error in getIncomeProjections:", error);
+            throw error;
+        }
+    }
+
+    private calculateDateRange(period: string, options: any): { startDate: Date; endDate: Date } {
+        const now = new Date();
+        now.setHours(0, 0, 0, 0);
+
+        switch (period) {
+            case 'weekly':
+                const startOfWeek = new Date(now);
+                startOfWeek.setDate(now.getDate() - now.getDay());
+                const endOfWeek = new Date(startOfWeek);
+                endOfWeek.setDate(startOfWeek.getDate() + 6);
+                endOfWeek.setHours(23, 59, 59, 999);
+                return { startDate: startOfWeek, endDate: endOfWeek };
+
+            case 'monthly':
+                const month = options.month !== undefined ? options.month : now.getMonth();
+                const year = options.year || now.getFullYear();
+                const startOfMonth = new Date(year, month, 1);
+                const endOfMonth = new Date(year, month + 1, 0, 23, 59, 59, 999);
+                return { startDate: startOfMonth, endDate: endOfMonth };
+
+            case 'yearly':
+                const yearForYear = options.year || now.getFullYear();
+                const startOfYear = new Date(yearForYear, 0, 1);
+                const endOfYear = new Date(yearForYear, 11, 31, 23, 59, 59, 999);
+                return { startDate: startOfYear, endDate: endOfYear };
+
+            case 'custom':
+                if (options.startDate && options.endDate) {
+                    return {
+                        startDate: new Date(options.startDate),
+                        endDate: new Date(options.endDate)
+                    };
+                }
+                return this.calculateDateRange('weekly', {});
+
+            default:
+                return this.calculateDateRange('weekly', {});
+        }
+    }
+
+    private async calculateIncomeProjections(params: {
+        dateRange: { startDate: Date; endDate: Date };
+        planType: string;
+        emailFilter?: string;
+        search?: string;
+    }) {
+        const projections: any[] = [];
+        const userFilter: any = {};
+
+        if (params.emailFilter) {
+            userFilter.email = params.emailFilter;
+        } else if (params.search) {
+            const searchRegex = { $regex: params.search, $options: 'i' };
+            userFilter.$or = [
+                { email: searchRegex },
+                { name: searchRegex }
+            ];
+        }
+
+        // 1. Fetch relevant users first
+        const users = await UserModel.find(userFilter).lean();
+        if (users.length === 0) {
+            return { projections: [], summary: this.calculateSummary([]) };
+        }
+
+        const userEmails = users.map(u => u.email);
+
+        // 2. Fetch subteams for these users (to know their members)
+        const subteams = await SubteamModel.find({ owner: { $in: userEmails } }).lean();
+        const memberEmails = [...new Set(subteams.map(s => s.member))];
+
+        // 3. Combined set of emails we need investment/lot data for
+        const allRelevantEmails = [...new Set([...userEmails, ...memberEmails])];
+
+        // 4. Targeted bulk load
+        const [allInvests, allPlatinumInvests, allLots] = await Promise.all([
+            InvestModel.find({ email: { $in: allRelevantEmails }, isClosed: false }).lean(),
+            PlatinumInvestModel.find({ email: { $in: allRelevantEmails }, isClosed: false }).lean(),
+            InvestmentLotModel.find({ email: { $in: allRelevantEmails }, closed: false }).lean()
+        ]);
+
+        // Create lookups
+        const investLookup = this.groupBy(allInvests, 'email');
+        const platinumInvestLookup = this.groupBy(allPlatinumInvests, 'email');
+        const lotLookup = this.groupLots(allLots);
+        const subteamLookup = this.groupBy(subteams, 'owner');
+
+        for (const user of users) {
+            const email = user.email;
+
+            // Normal plan projections
+            if (params.planType === 'all' || params.planType === 'normal') {
+                const investments = investLookup.get(email) || [];
+                const lots = lotLookup.get(`${email}_NORMAL`) || [];
+
+                for (const invest of investments) {
+                    const self = this.calculateSelfProjectionsMemory(user, invest, lots, 'normal', params.dateRange);
+                    projections.push(...self);
+                }
+
+                // Team projections for normal plan
+                const teams = subteamLookup.get(email) || [];
+                for (const sub of teams) {
+                    const memberInvests = investLookup.get(sub.member) || [];
+                    const memberLots = lotLookup.get(`${sub.member}_NORMAL`) || [];
+                    for (const mInvest of memberInvests) {
+                        const team = this.calculateTeamProjectionsMemory(user, sub, mInvest, memberLots, 'normal', params.dateRange);
+                        projections.push(...team);
+                    }
+                }
+            }
+
+            // Platinum plan projections
+            if (params.planType === 'all' || params.planType === 'platinum') {
+                const investments = platinumInvestLookup.get(email) || [];
+                const lots = lotLookup.get(`${email}_PLATINUM`) || [];
+
+                for (const invest of investments) {
+                    const self = this.calculateSelfProjectionsMemory(user, invest, lots, 'platinum', params.dateRange);
+                    projections.push(...self);
+                }
+
+                // Team projections for platinum plan
+                const teams = subteamLookup.get(email) || [];
+                for (const sub of teams) {
+                    const memberInvests = platinumInvestLookup.get(sub.member) || [];
+                    const memberLots = lotLookup.get(`${sub.member}_PLATINUM`) || [];
+                    for (const mInvest of memberInvests) {
+                        const team = this.calculateTeamProjectionsMemory(user, sub, mInvest, memberLots, 'platinum', params.dateRange);
+                        projections.push(...team);
+                    }
+                }
+            }
+        }
+
+        return {
+            projections,
+            summary: this.calculateSummary(projections)
+        };
+    }
+
+    private groupBy(array: any[], key: string) {
+        return array.reduce((acc, obj) => {
+            const k = obj[key];
+            if (!acc.has(k)) acc.set(k, []);
+            acc.get(k).push(obj);
+            return acc;
+        }, new Map<string, any[]>());
+    }
+
+    private groupLots(lots: any[]) {
+        return lots.reduce((acc, lot) => {
+            const k = `${lot.email}_${lot.plan}`;
+            if (!acc.has(k)) acc.set(k, []);
+            acc.get(k).push(lot);
+            return acc;
+        }, new Map<string, any[]>());
+    }
+
+    private calculateEligiblePrincipal(invest: any, lots: any[]) {
+        if (!invest || !invest.incomeDate) return { principal: new Decimal(0), eligibleLots: [] };
+        const incomeDate = new Date(invest.incomeDate);
+        const from = new Date(incomeDate);
+        from.setDate(from.getDate() - 7);
+        const to = new Date(incomeDate);
+
+        const totalAmount = new Decimal(String(invest.totalAmount ?? '0'));
+        let recentLotsSum = new Decimal(0);
+
+        const eligibleLots: any[] = [];
+        for (const lot of lots) {
+            const createdRaw = lot.createdAt ?? lot.investDate ?? lot.updatedAt ?? null;
+            const created = createdRaw ? new Date(createdRaw) : null;
+
+            if (created && !isNaN(created.getTime()) && created >= from && created <= to) {
+                recentLotsSum = recentLotsSum.plus(new Decimal(String(lot.amount ?? '0')));
+            } else {
+                eligibleLots.push(lot);
+            }
+        }
+
+        return {
+            principal: Decimal.max(totalAmount.minus(recentLotsSum), 0),
+            eligibleLots
+        };
+    }
+
+    private calculateSelfProjectionsMemory(user: any, invest: any, lots: any[], planType: 'normal' | 'platinum', dateRange: { startDate: Date; endDate: Date }) {
+        const projections: any[] = [];
+        const { principal, eligibleLots } = this.calculateEligiblePrincipal(invest, lots);
+        if (principal.lte(0)) return projections;
+
+        let currentDate = new Date(invest.incomeDate);
+        const endDate = new Date(dateRange.endDate);
+
+        while (currentDate <= endDate) {
+            if (currentDate >= dateRange.startDate) {
+                let totalIncome = new Decimal(0);
+                for (const lot of eligibleLots) {
+                    const lotAmount = new Decimal(String(lot.amount ?? '0'));
+                    const rate = planType === 'normal' ?
+                        this.getNormalLotRate(parseFloat(invest.totalAmount), lot.createdAt) :
+                        this.getPlatinumLotRate(lot.createdAt);
+
+                    totalIncome = totalIncome.plus(lotAmount.mul(new Decimal(rate)).div(100));
+                }
+
+                if (totalIncome.gt(0)) {
+                    projections.push({
+                        email: user.email,
+                        name: user.name || user.email,
+                        planType,
+                        incomeType: 'self',
+                        projectionDate: new Date(currentDate),
+                        projectedAmount: parseFloat(totalIncome.toFixed(2)),
+                        currency: 'USD'
+                    });
+                }
+            }
+            currentDate = new Date(currentDate.getTime() + 16 * 24 * 60 * 60 * 1000);
+        }
+        return projections;
+    }
+
+    private calculateTeamProjectionsMemory(user: any, sub: any, memberInvest: any, memberLots: any[], planType: 'normal' | 'platinum', dateRange: { startDate: Date; endDate: Date }) {
+        const projections: any[] = [];
+        const { principal } = this.calculateEligiblePrincipal(memberInvest, memberLots);
+        if (principal.lte(0)) return projections;
+
+        const incomePercentage = this.getLevelIncomePercentage(Number(sub.level || 0));
+        const teamIncome = principal.mul(new Decimal(incomePercentage)).div(100);
+
+        let currentDate = new Date(memberInvest.incomeDate);
+        const endDate = new Date(dateRange.endDate);
+
+        while (currentDate <= endDate) {
+            if (currentDate >= dateRange.startDate) {
+                projections.push({
+                    email: user.email,
+                    name: user.name || user.email,
+                    planType,
+                    incomeType: 'team',
+                    projectionDate: new Date(currentDate),
+                    projectedAmount: parseFloat(teamIncome.toFixed(2)),
+                    currency: 'USD',
+                    memberEmail: sub.member,
+                    level: sub.level
+                });
+            }
+            currentDate = new Date(currentDate.getTime() + 16 * 24 * 60 * 60 * 1000);
+        }
+        return projections;
+    }
+
+    private getNormalLotRate(totalInvestAmountNum: number, lotCreatedAt: Date | null): number {
+        const CUTOFF_DATE = new Date('2025-12-01T00:00:00.000Z');
+        const isOld = lotCreatedAt ? (lotCreatedAt < CUTOFF_DATE) : true;
+        if (totalInvestAmountNum >= 50 && totalInvestAmountNum <= 2000) return isOld ? 3.5 : 2.75;
+        return isOld ? 4.0 : 3.25;
+    }
+
+    private getPlatinumLotRate(lotCreatedAt: Date | null): number {
+        return 6.0;
+    }
+
+    private getLevelIncomePercentage(level: number): number {
+        const incomeLevels: any = {
+            1: 1, 2: 0.375, 3: 0.325, 4: 0.25, 5: 0.2,
+            6: 0.125, 7: 0.075, 8: 0.05, 9: 0.035, 10: 0.035, 11: 0.03
+        };
+        return incomeLevels[level] || 0;
+    }
+
+    private calculateSummary(projections: any[]) {
+        const totalProjectedAmount = projections.reduce((sum, item) => sum + item.projectedAmount, 0);
+        const selfIncomeTotal = projections.filter(item => item.incomeType === 'self').reduce((sum, item) => sum + item.projectedAmount, 0);
+        const teamIncomeTotal = projections.filter(item => item.incomeType === 'team').reduce((sum, item) => sum + item.projectedAmount, 0);
+        const normalPlanTotal = projections.filter(item => item.planType === 'normal').reduce((sum, item) => sum + item.projectedAmount, 0);
+        const platinumPlanTotal = projections.filter(item => item.planType === 'platinum').reduce((sum, item) => sum + item.projectedAmount, 0);
+        const uniqueUsers = new Set(projections.map(item => item.email)).size;
+
+        return {
+            totalProjectedAmount: parseFloat(totalProjectedAmount.toFixed(2)),
+            selfIncomeTotal: parseFloat(selfIncomeTotal.toFixed(2)),
+            teamIncomeTotal: parseFloat(teamIncomeTotal.toFixed(2)),
+            normalPlanTotal: parseFloat(normalPlanTotal.toFixed(2)),
+            platinumPlanTotal: parseFloat(platinumPlanTotal.toFixed(2)),
+            userCount: uniqueUsers
+        };
+    }
+
+    // Shift History Methods (matching MLM backend)
+    private getTimeAgo(date: Date): string {
+        const now = new Date();
+        const diffMs = now.getTime() - date.getTime();
+        const diffMins = Math.floor(diffMs / 60000);
+        const diffHours = Math.floor(diffMs / 3600000);
+        const diffDays = Math.floor(diffMs / 86400000);
+
+        if (diffMins < 60) {
+            return `${diffMins} minute${diffMins !== 1 ? 's' : ''} ago`;
+        } else if (diffHours < 24) {
+            return `${diffHours} hour${diffHours !== 1 ? 's' : ''} ago`;
+        } else if (diffDays < 30) {
+            return `${diffDays} day${diffDays !== 1 ? 's' : ''} ago`;
+        } else {
+            const diffMonths = Math.floor(diffDays / 30);
+            return `${diffMonths} month${diffMonths !== 1 ? 's' : ''} ago`;
+        }
+    }
+
+    private formatCurrency(amount: string): string {
+        const num = parseFloat(amount);
+        return isNaN(num) ? '$0.00' : `$${num.toFixed(2)}`;
+    }
+
+    async getShiftHistory(params: {
+        page?: string;
+        limit?: string;
+        email?: string;
+        fromPlan?: string;
+        toPlan?: string;
+        status?: string;
+        startDate?: string;
+        endDate?: string;
+        search?: string;
+        sortBy?: string;
+        sortOrder?: string;
+    }) {
+        try {
+            // Parse pagination parameters
+            const pageNum = Math.max(1, parseInt(params.page || '1', 10));
+            const limitNum = Math.min(100, Math.max(1, parseInt(params.limit || '20', 10)));
+            const skip = (pageNum - 1) * limitNum;
+
+            // Build filter query
+            const filter: any = {};
+
+            // Filter by email (exact match or partial)
+            if (params.email && typeof params.email === 'string' && params.email.trim()) {
+                filter.email = { $regex: params.email.trim(), $options: 'i' };
+            }
+
+            // Filter by fromPlan
+            if (params.fromPlan && typeof params.fromPlan === 'string' && params.fromPlan.trim()) {
+                filter.fromPlan = params.fromPlan.trim().toUpperCase();
+            }
+
+            // Filter by toPlan
+            if (params.toPlan && typeof params.toPlan === 'string' && params.toPlan.trim()) {
+                filter.toPlan = params.toPlan.trim().toUpperCase();
+            }
+
+            // Filter by status
+            if (params.status && typeof params.status === 'string' && params.status.trim()) {
+                filter.status = params.status.trim().toUpperCase();
+            }
+
+            // Date range filter
+            if (params.startDate || params.endDate) {
+                filter.createdAt = {};
+                if (params.startDate && typeof params.startDate === 'string') {
+                    const start = new Date(params.startDate);
+                    if (!isNaN(start.getTime())) {
+                        filter.createdAt.$gte = start;
+                    }
+                }
+                if (params.endDate && typeof params.endDate === 'string') {
+                    const end = new Date(params.endDate);
+                    if (!isNaN(end.getTime())) {
+                        end.setHours(23, 59, 59, 999);
+                        filter.createdAt.$lte = end;
+                    }
+                }
+                // If date object is empty, remove it
+                if (Object.keys(filter.createdAt).length === 0) {
+                    delete filter.createdAt;
+                }
+            }
+
+            // Search filter (search across multiple fields)
+            if (params.search && typeof params.search === 'string' && params.search.trim()) {
+                const searchTerm = params.search.trim();
+                filter.$or = [
+                    { email: { $regex: searchTerm, $options: 'i' } },
+                    { fromPlan: { $regex: searchTerm, $options: 'i' } },
+                    { toPlan: { $regex: searchTerm, $options: 'i' } },
+                    { 'metadata.notes': { $regex: searchTerm, $options: 'i' } }
+                ];
+            }
+
+            // Validate sort parameters
+            const validSortFields = ['createdAt', 'updatedAt', 'amount', 'email', 'fromPlan', 'toPlan', 'status'];
+            const sortField: string = validSortFields.includes(params.sortBy || '') ? (params.sortBy as string) : 'createdAt';
+            const sortDirection = params.sortOrder === 'asc' ? 1 : -1;
+
+            // Execute query with pagination
+            const [history, total] = await Promise.all([
+                ShiftHistoryModel.find(filter)
+                    .sort({ [sortField]: sortDirection })
+                    .skip(skip)
+                    .limit(limitNum)
+                    .lean()
+                    .exec(),
+                ShiftHistoryModel.countDocuments(filter)
+            ]);
+
+            // Calculate pagination metadata
+            const totalPages = Math.ceil(total / limitNum);
+            const hasNextPage = pageNum < totalPages;
+            const hasPrevPage = pageNum > 1;
+
+            // Format response data
+            const formattedHistory = history.map(record => ({
+                id: record._id.toString(),
+                email: record.email,
+                fromPlan: record.fromPlan,
+                toPlan: record.toPlan,
+                amount: record.amount,
+                status: record.status,
+                createdAt: record.createdAt,
+                metadata: record.metadata || {},
+                fromInvestId: record.fromInvestId,
+                toInvestId: record.toInvestId,
+                // Add derived fields for easier frontend display
+                formattedAmount: this.formatCurrency(record.amount),
+                timeAgo: this.getTimeAgo(record.createdAt)
+            }));
+
+            // Get statistics for the filtered results
+            const statistics = await this.calculateShiftStatistics(filter);
+
+            // Calculate active filters count
+            const activeFilters = {
+                email: params.email || null,
+                fromPlan: params.fromPlan || null,
+                toPlan: params.toPlan || null,
+                status: params.status || null,
+                dateRange: params.startDate || params.endDate ? { startDate: params.startDate, endDate: params.endDate } : null,
+                search: params.search || null
+            };
+
+            let appliedFiltersCount = 0;
+            Object.values(activeFilters).forEach(value => {
+                if (value !== null && !(typeof value === 'object' && Object.values(value).every(v => v === null || v === undefined))) {
+                    appliedFiltersCount++;
+                }
+            });
+
+            return {
+                history: formattedHistory,
+                pagination: {
+                    total,
+                    page: pageNum,
+                    limit: limitNum,
+                    totalPages,
+                    hasNextPage,
+                    hasPrevPage
+                },
+                statistics,
+                filters: {
+                    applied: appliedFiltersCount,
+                    activeFilters
+                }
+            };
+        } catch (error) {
+            console.error('Error in getShiftHistory:', error);
+            throw error;
+        }
+    }
+
+    private async calculateShiftStatistics(filter: any) {
+        try {
+            const pipeline = [
+                { $match: filter },
+                {
+                    $group: {
+                        _id: null,
+                        totalTransfers: { $sum: 1 },
+                        totalAmount: {
+                            $sum: {
+                                $convert: {
+                                    input: "$amount",
+                                    to: "double",
+                                    onError: 0,
+                                    onNull: 0
+                                }
+                            }
+                        },
+                        successCount: {
+                            $sum: { $cond: [{ $eq: ["$status", "SUCCESS"] }, 1, 0] }
+                        },
+                        failedCount: {
+                            $sum: { $cond: [{ $eq: ["$status", "FAILED"] }, 1, 0] }
+                        },
+                        partialCount: {
+                            $sum: { $cond: [{ $eq: ["$status", "PARTIAL"] }, 1, 0] }
+                        },
+                        byFromPlan: { $push: "$fromPlan" },
+                        byToPlan: { $push: "$toPlan" }
+                    }
+                }
+            ];
+
+            const result = await ShiftHistoryModel.aggregate(pipeline);
+
+            if (result.length === 0) {
+                return {
+                    totalTransfers: 0,
+                    totalAmount: 0,
+                    formattedTotalAmount: '$0.00',
+                    successCount: 0,
+                    failedCount: 0,
+                    partialCount: 0,
+                    successRate: '0%',
+                    fromPlanDistribution: {},
+                    toPlanDistribution: {}
+                };
+            }
+
+            const stats = result[0];
+
+            // Calculate plan distributions
+            const fromPlanCounts: Record<string, number> = {};
+            const toPlanCounts: Record<string, number> = {};
+
+            stats.byFromPlan?.forEach((plan: string) => {
+                fromPlanCounts[plan] = (fromPlanCounts[plan] || 0) + 1;
+            });
+
+            stats.byToPlan?.forEach((plan: string) => {
+                toPlanCounts[plan] = (toPlanCounts[plan] || 0) + 1;
+            });
+
+            const successRate = stats.totalTransfers > 0
+                ? ((stats.successCount || 0) / stats.totalTransfers * 100).toFixed(2) + '%'
+                : '0%';
+
+            return {
+                totalTransfers: stats.totalTransfers || 0,
+                totalAmount: stats.totalAmount || 0,
+                formattedTotalAmount: `$${(stats.totalAmount || 0).toFixed(2)}`,
+                successCount: stats.successCount || 0,
+                failedCount: stats.failedCount || 0,
+                partialCount: stats.partialCount || 0,
+                successRate,
+                fromPlanDistribution: fromPlanCounts,
+                toPlanDistribution: toPlanCounts
+            };
+        } catch (error) {
+            console.error('Error calculating shift statistics:', error);
+            return {
+                totalTransfers: 0,
+                totalAmount: 0,
+                formattedTotalAmount: '$0.00',
+                successCount: 0,
+                failedCount: 0,
+                partialCount: 0,
+                successRate: '0%',
+                fromPlanDistribution: {},
+                toPlanDistribution: {}
+            };
+        }
+    }
+
+    async getShiftHistoryDetails(id: string) {
+        try {
+            if (!id || !id.match(/^[0-9a-fA-F]{24}$/)) {
+                throw new Error('Valid shift history ID is required');
+            }
+
+            // Find the shift history record
+            const history = await ShiftHistoryModel.findById(id).lean().exec();
+
+            if (!history) {
+                throw new Error('Shift history record not found');
+            }
+
+            // Format the response
+            return {
+                ...history,
+                id: history._id.toString(),
+                formattedAmount: this.formatCurrency(history.amount),
+                timeAgo: this.getTimeAgo(history.createdAt)
+            };
+        } catch (error) {
+            console.error('Error in getShiftHistoryDetails:', error);
+            throw error;
+        }
+    }
+
+    async getShiftHistoryStats(params: { startDate?: string; endDate?: string }) {
+        try {
+            const filter: any = {};
+
+            if (params.startDate || params.endDate) {
+                filter.createdAt = {};
+                if (params.startDate && typeof params.startDate === 'string') {
+                    const start = new Date(params.startDate);
+                    if (!isNaN(start.getTime())) filter.createdAt.$gte = start;
+                }
+                if (params.endDate && typeof params.endDate === 'string') {
+                    const end = new Date(params.endDate);
+                    if (!isNaN(end.getTime())) {
+                        end.setHours(23, 59, 59, 999);
+                        filter.createdAt.$lte = end;
+                    }
+                }
+            }
+
+            const [statistics, dailyStats] = await Promise.all([
+                this.calculateShiftStatistics(filter),
+                ShiftHistoryModel.aggregate([
+                    { $match: filter },
+                    {
+                        $group: {
+                            _id: {
+                                $dateToString: { format: "%Y-%m-%d", date: "$createdAt" }
+                            },
+                            count: { $sum: 1 },
+                            totalAmount: {
+                                $sum: {
+                                    $convert: {
+                                        input: "$amount",
+                                        to: "double",
+                                        onError: 0,
+                                        onNull: 0
+                                    }
+                                }
+                            },
+                            successCount: {
+                                $sum: { $cond: [{ $eq: ["$status", "SUCCESS"] }, 1, 0] }
+                            }
+                        }
+                    },
+                    { $sort: { _id: 1 } },
+                    { $limit: 30 }
+                ])
+            ]);
+
+            return {
+                ...statistics,
+                dailyStats
+            };
+        } catch (error) {
+            console.error('Error in getShiftHistoryStats:', error);
+            throw error;
+        }
+    }
+
+    async exportShiftHistoryCSV(params: {
+        email?: string;
+        fromPlan?: string;
+        toPlan?: string;
+        status?: string;
+        startDate?: string;
+        endDate?: string;
+        search?: string;
+    }) {
+        try {
+            // Build filter (same as getShiftHistory)
+            const filter: any = {};
+
+            if (params.email && typeof params.email === 'string' && params.email.trim()) {
+                filter.email = { $regex: params.email.trim(), $options: 'i' };
+            }
+
+            if (params.fromPlan && typeof params.fromPlan === 'string' && params.fromPlan.trim()) {
+                filter.fromPlan = params.fromPlan.trim().toUpperCase();
+            }
+
+            if (params.toPlan && typeof params.toPlan === 'string' && params.toPlan.trim()) {
+                filter.toPlan = params.toPlan.trim().toUpperCase();
+            }
+
+            if (params.status && typeof params.status === 'string' && params.status.trim()) {
+                filter.status = params.status.trim().toUpperCase();
+            }
+
+            if (params.startDate || params.endDate) {
+                filter.createdAt = {};
+                if (params.startDate && typeof params.startDate === 'string') {
+                    const start = new Date(params.startDate);
+                    if (!isNaN(start.getTime())) filter.createdAt.$gte = start;
+                }
+                if (params.endDate && typeof params.endDate === 'string') {
+                    const end = new Date(params.endDate);
+                    if (!isNaN(end.getTime())) {
+                        end.setHours(23, 59, 59, 999);
+                        filter.createdAt.$lte = end;
+                    }
+                }
+                if (Object.keys(filter.createdAt).length === 0) {
+                    delete filter.createdAt;
+                }
+            }
+
+            if (params.search && typeof params.search === 'string' && params.search.trim()) {
+                const searchTerm = params.search.trim();
+                filter.$or = [
+                    { email: { $regex: searchTerm, $options: 'i' } },
+                    { fromPlan: { $regex: searchTerm, $options: 'i' } },
+                    { toPlan: { $regex: searchTerm, $options: 'i' } },
+                    { 'metadata.notes': { $regex: searchTerm, $options: 'i' } }
+                ];
+            }
+
+            // Fetch all matching records
+            const history = await ShiftHistoryModel.find(filter)
+                .sort({ createdAt: -1 })
+                .lean()
+                .exec();
+
+            // Simple CSV format
+            const headers = ['ID', 'Email', 'From Plan', 'To Plan', 'Amount', 'Status', 'Created At'];
+            let csv = headers.join(',') + '\n';
+
+            history.forEach(record => {
+                const escapeCSV = (field: any) => `"${String(field).replace(/"/g, '""')}"`;
+                const row = [
+                    record._id.toString(),
+                    record.email,
+                    record.fromPlan,
+                    record.toPlan,
+                    `$${parseFloat(record.amount || '0').toFixed(2)}`,
+                    record.status,
+                    record.createdAt.toISOString()
+                ].map(escapeCSV).join(',');
+                csv += row + '\n';
+            });
+
+            return csv;
+        } catch (error) {
+            console.error('Error in exportShiftHistoryCSV:', error);
             throw error;
         }
     }

@@ -54,6 +54,20 @@ router.get("/gwc/coinsHistory/:email", dashboardController.getGwcCoinHistoryPagi
 router.post("/gwc/addCoins/:email", dashboardController.addGwcCoins.bind(dashboardController));
 router.post("/gwc/deductCoins/:email", dashboardController.deductGwcCoins.bind(dashboardController));
 
+// Income Statistics Routes
+router.get("/incomestats/realtime", dashboardController.getRealTimeIncomeStats.bind(dashboardController));
+router.get("/incomestats/projections", dashboardController.getIncomeProjections.bind(dashboardController));
+router.get("/incomestats/user/:email/projections", (req, res) => {
+    req.query["email"] = req.params["email"];
+    return dashboardController.getIncomeProjections(req, res);
+});
+
+// Shift History Routes (matching MLM backend)
+router.get("/admin/shift-history", dashboardController.getShiftHistory.bind(dashboardController));
+router.get("/admin/shift-history/stats", dashboardController.getShiftHistoryStats.bind(dashboardController));
+router.get("/admin/shift-history/export", dashboardController.exportShiftHistoryCSV.bind(dashboardController));
+router.get("/admin/shift-history/:id", dashboardController.getShiftHistoryDetails.bind(dashboardController));
+
 router.post("/auth/login", dashboardController.login.bind(dashboardController));
 
 export default router;

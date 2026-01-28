@@ -5,6 +5,7 @@ const teamIncomeSchema = new mongoose.Schema({
     emailMember: { type: String, required: true },
     income: { type: String }, // It's string in legacy
 }, { timestamps: true, collection: "teamincomes" });
+teamIncomeSchema.index({ createdAt: -1 });
 
 const TeamIncomeModel = mongoose.model("TeamIncome", teamIncomeSchema);
 export default TeamIncomeModel;

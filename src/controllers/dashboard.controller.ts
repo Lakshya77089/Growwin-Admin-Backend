@@ -470,4 +470,80 @@ export class DashboardController {
             res.status(500).json({ status: "error", message: "Error updating transfer", error });
         }
     }
+
+    async getRealTimeIncomeStats(req: Request, res: Response) {
+        try {
+            const data = await dashboardService.getRealTimeIncomeStats();
+            res.json({ success: true, data });
+        } catch (error) {
+            res.status(500).json({ success: false, message: "Error fetching real-time income stats", error });
+        }
+    }
+
+    async getIncomeProjections(req: Request, res: Response) {
+        try {
+            const data = await dashboardService.getIncomeProjections(req.query);
+            res.json({ success: true, data });
+        } catch (error) {
+            res.status(500).json({ success: false, message: "Error fetching income projections", error });
+        }
+    }
+
+    // Shift History Controllers (matching MLM backend)
+    async getShiftHistory(req: Request, res: Response) {
+        try {
+            const data = await dashboardService.getShiftHistory(req.query);
+            res.status(200).json({ status: 'success', data });
+        } catch (error) {
+            res.status(500).json({
+                status: 'error',
+                message: "Error fetching shift history",
+                details: error instanceof Error ? error.message : 'Unknown error'
+            });
+        }
+    }
+
+    async getShiftHistoryDetails(req: Request, res: Response) {
+        try {
+            const id = typeof req.params.id === 'string' ? req.params.id : '';
+            const data = await dashboardService.getShiftHistoryDetails(id);
+            res.status(200).json({ status: 'success', data });
+        } catch (error) {
+            const statusCode = error instanceof Error && error.message.includes('not found') ? 404 :
+                error instanceof Error && error.message.includes('required') ? 400 : 500;
+            res.status(statusCode).json({
+                status: 'error',
+                message: error instanceof Error ? error.message : "Error fetching shift history details"
+            });
+        }
+    }
+
+    async getShiftHistoryStats(req: Request, res: Response) {
+        try {
+            const data = await dashboardService.getShiftHistoryStats(req.query);
+            res.status(200).json({ status: 'success', data });
+        } catch (error) {
+            res.status(500).json({
+                status: 'error',
+                message: "Error fetching shift history stats",
+                details: error instanceof Error ? error.message : 'Unknown error'
+            });
+        }
+    }
+
+    async exportShiftHistoryCSV(req: Request, res: Response) {
+        try {
+            const csv = await dashboardService.exportShiftHistoryCSV(req.query);
+            const timestamp = new Date().toISOString().split('T')[0];
+            res.setHeader('Content-Type', 'text/csv');
+            res.setHeader('Content-Disposition', `attachment; filename="shift-history-${timestamp}.csv"`);
+            res.send(csv);
+        } catch (error) {
+            res.status(500).json({
+                status: 'error',
+                message: "Error exporting shift history",
+                details: error instanceof Error ? error.message : 'Unknown error'
+            });
+        }
+    }
 }
