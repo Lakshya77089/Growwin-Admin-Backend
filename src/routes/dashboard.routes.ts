@@ -32,6 +32,8 @@ router.put("/invest/toggle-investment-allowed/:email", dashboardController.toggl
 router.patch("/kyc/verify/:email", dashboardController.verifyKYC.bind(dashboardController));
 router.post("/withdraw/updateWithdraw/:id", dashboardController.updateWithdrawal.bind(dashboardController));
 router.get("/wallet/walletbalance/:email", dashboardController.getWalletBalancePersonal.bind(dashboardController));
+router.get("/wallet/all", dashboardController.getAllWalletsPaginated.bind(dashboardController));
+router.get("/wallet/history", dashboardController.getWalletHistoryPaginated.bind(dashboardController));
 router.post("/wallet/updateWallet", dashboardController.updateWallet.bind(dashboardController));
 router.get("/referal/getReferal/:id", dashboardController.getReferral.bind(dashboardController));
 router.get("/user/getUser/:email", dashboardController.getUser.bind(dashboardController));
@@ -46,6 +48,12 @@ router.get("/platinum/admin/team-income", dashboardController.getAllPlatinumTeam
 router.get("/income/admin/getAllIncomePaginated", dashboardController.getAllSelfIncomePaginated.bind(dashboardController));
 router.post("/income/admin/updateSelfIncome", dashboardController.updateSelfIncome.bind(dashboardController));
 router.post("/platinum/admin/updatePlatinumIncome", dashboardController.updatePlatinumIncome.bind(dashboardController));
+// GWC Coin Routes
+router.get("/gwc/all-users-coins", dashboardController.getAllUsersGwcCoinsPaginated.bind(dashboardController));
+router.get("/gwc/coinsHistory/:email", dashboardController.getGwcCoinHistoryPaginated.bind(dashboardController));
+router.post("/gwc/addCoins/:email", dashboardController.addGwcCoins.bind(dashboardController));
+router.post("/gwc/deductCoins/:email", dashboardController.deductGwcCoins.bind(dashboardController));
+
 router.post("/auth/login", dashboardController.login.bind(dashboardController));
 
 export default router;

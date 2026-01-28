@@ -175,10 +175,37 @@ export class DashboardController {
     async getWalletBalancePersonal(req: Request, res: Response) {
         try {
             const { email } = req.params;
-            const wallet = await dashboardService.getWalletBalancePersonal(email as string);
-            res.json({ status: "success", wallet });
+            if (!email) {
+                return res.status(400).json({ status: "error", message: "Email is required" });
+            }
+            const balance = await dashboardService.getWalletBalancePersonal(String(email));
+            res.json({ status: "success", wallet: { balance } });
         } catch (error) {
-            res.status(500).json({ message: "Error fetching user wallet balance", error });
+            res.status(500).json({ message: "Error fetching personal wallet balance", error });
+        }
+    }
+
+    async getAllWalletsPaginated(req: Request, res: Response) {
+        try {
+            const page = parseInt(req.query["page"] as string) || 1;
+            const limit = parseInt(req.query["limit"] as string) || 20;
+            const searchTerm = (req.query["searchTerm"] as string) || '';
+            const data = await dashboardService.getAllWalletsPaginated(page, limit, searchTerm);
+            res.json(data);
+        } catch (error) {
+            res.status(500).json({ message: "Error fetching wallet list", error });
+        }
+    }
+
+    async getWalletHistoryPaginated(req: Request, res: Response) {
+        try {
+            const email = (req.query["email"] as string) || '';
+            const page = parseInt(req.query["page"] as string) || 1;
+            const limit = parseInt(req.query["limit"] as string) || 20;
+            const data = await dashboardService.getWalletHistoryPaginated(email, page, limit);
+            res.json(data);
+        } catch (error) {
+            res.status(500).json({ message: "Error fetching wallet history", error });
         }
     }
 
@@ -222,6 +249,61 @@ export class DashboardController {
             res.json({ status: "success", Invest: invest });
         } catch (error) {
             res.status(500).json({ status: "error", message: "Error fetching investment", error });
+        }
+    }
+
+    async getAllUsersGwcCoinsPaginated(req: Request, res: Response) {
+        try {
+            const page = parseInt(req.query["page"] as string) || 1;
+            const limit = parseInt(req.query["limit"] as string) || 20;
+            const searchTerm = (req.query["searchTerm"] as string) || '';
+            const data = await dashboardService.getAllUsersGwcCoinsPaginated(page, limit, searchTerm);
+            res.json(data);
+        } catch (error) {
+            res.status(500).json({ status: "error", message: "Error fetching user coins", error });
+        }
+    }
+
+    async getGwcCoinHistoryPaginated(req: Request, res: Response) {
+        try {
+            const { email } = req.params;
+            if (!email) {
+                return res.status(400).json({ status: "error", message: "Email is required" });
+            }
+            const page = parseInt(req.query["page"] as string) || 1;
+            const limit = parseInt(req.query["limit"] as string) || 20;
+            const data = await dashboardService.getGwcCoinHistoryPaginated(String(email), page, limit);
+            res.json(data);
+        } catch (error) {
+            res.status(500).json({ status: "error", message: "Error fetching coin history", error });
+        }
+    }
+
+    async addGwcCoins(req: Request, res: Response) {
+        try {
+            const { email } = req.params;
+            if (!email) {
+                return res.status(400).json({ status: "error", message: "Email is required" });
+            }
+            const { coinsToManage } = req.body;
+            const result = await dashboardService.manageGwcCoins(String(email), coinsToManage, 'add');
+            res.json({ status: "success", totalCoins: result?.totalCoins });
+        } catch (error) {
+            res.status(500).json({ status: "error", message: "Error adding coins", error });
+        }
+    }
+
+    async deductGwcCoins(req: Request, res: Response) {
+        try {
+            const { email } = req.params;
+            if (!email) {
+                return res.status(400).json({ status: "error", message: "Email is required" });
+            }
+            const { coinsToManage } = req.body;
+            const result = await dashboardService.manageGwcCoins(String(email), coinsToManage, 'deduct');
+            res.json({ status: "success", totalCoins: result?.totalCoins });
+        } catch (error) {
+            res.status(500).json({ status: "error", message: "Error deducting coins", error });
         }
     }
 

@@ -13,6 +13,10 @@ import TeamIncomeModel from "../models/teamIncome.model.js";
 import PlatinumTeamIncomeModel from "../models/platinumTeamIncome.model.js";
 import IncomeModel from "../models/income.model.js";
 import PlatinumIncomeModel from "../models/platinumIncome.model.js";
+import WalletHistoryModel from "../models/walletHistory.model.js";
+import GwcCoinModel from "../models/gwcCoin.model.js";
+import GwcCoinHistoryModel from "../models/gwcHistory.model.js";
+import CoinValueModel from "../models/coinValue.model.js";
 
 export class DashboardService {
     async getAllUsers(page: number = 1, limit: number = 20, filter: string = 'all', search: string = '') {
@@ -496,7 +500,90 @@ export class DashboardService {
 
     async updateWallet(email: string, amount: string) {
         try {
-            return await WalletModel.findOneAndUpdate({ email }, { balance: amount }, { new: true, upsert: true }).lean();
+            const wallet = await WalletModel.findOne({ email });
+            const previousBalance = wallet ? wallet.balance : "0";
+
+            const result = await WalletModel.findOneAndUpdate(
+                { email },
+                { balance: amount.toString() },
+                { new: true, upsert: true }
+            ).lean();
+
+            const prevNum = parseFloat(previousBalance);
+            const nextNum = parseFloat(amount);
+            const diff = nextNum - prevNum;
+
+            await WalletHistoryModel.create({
+                email,
+                previousAmount: previousBalance,
+                updatedAmount: amount.toString(),
+                updateAmount: Math.abs(diff).toString(),
+                updateType: diff >= 0 ? 'credit' : 'debit'
+            });
+
+            return result;
+        } catch (error) {
+            throw error;
+        }
+    }
+
+    async getAllWalletsPaginated(page: number, limit: number, searchTerm: string) {
+        try {
+            const skip = (page - 1) * limit;
+            const query: any = {};
+            if (searchTerm) {
+                const searchRegex = new RegExp(searchTerm, 'i');
+                query.$or = [{ name: searchRegex }, { email: searchRegex }];
+            }
+
+            const total = await UserModel.countDocuments(query);
+            const users = await UserModel.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean();
+
+            const emails = users.map(u => u.email);
+            const wallets = await WalletModel.find({ email: { $in: emails } }).lean();
+            const walletMap = new Map(wallets.map(w => [w.email, w.balance]));
+
+            const data = users.map(u => ({
+                _id: u._id,
+                name: u.name,
+                email: u.email,
+                active: u.active,
+                createdAt: u.createdAt,
+                balance: walletMap.get(u.email) || "0"
+            }));
+
+            return {
+                status: "success",
+                data,
+                pagination: {
+                    total,
+                    page,
+                    limit,
+                    totalPages: Math.ceil(total / limit)
+                }
+            };
+        } catch (error) {
+            throw error;
+        }
+    }
+
+    async getWalletHistoryPaginated(email: string, page: number, limit: number) {
+        try {
+            const skip = (page - 1) * limit;
+            const query = email ? { email } : {};
+            const total = await WalletHistoryModel.countDocuments(query);
+            const history = await WalletHistoryModel.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean();
+
+            return {
+                status: "success",
+                history,
+                pagination: {
+                    total,
+                    page,
+                    limit,
+                    totalPages: Math.ceil(total / limit)
+                }
+            };
         } catch (error) {
             throw error;
         }
@@ -1128,6 +1215,104 @@ export class DashboardService {
             return result;
         } catch (error) {
             console.error("Error in updateTransfer:", error);
+            throw error;
+        }
+    }
+
+    async getGwcCoinHistoryPaginated(email: string, page: number, limit: number) {
+        try {
+            const skip = (page - 1) * limit;
+            const query = email ? { email } : {};
+            const total = await GwcCoinHistoryModel.countDocuments(query);
+            const history = await GwcCoinHistoryModel.find(query).sort({ date: -1 }).skip(skip).limit(limit).lean();
+
+            return {
+                status: "success",
+                history,
+                pagination: {
+                    total,
+                    page,
+                    limit,
+                    totalPages: Math.ceil(total / limit)
+                }
+            };
+        } catch (error) {
+            throw error;
+        }
+    }
+
+    async getAllUsersGwcCoinsPaginated(page: number, limit: number, searchTerm: string) {
+        try {
+            const skip = (page - 1) * limit;
+
+            const query: any = {};
+            if (searchTerm) {
+                const searchRegex = new RegExp(searchTerm, 'i');
+                query.$or = [{ name: searchRegex }, { email: searchRegex }];
+            }
+
+            const total = await UserModel.countDocuments(query);
+            const users = await UserModel.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean();
+
+            const emails = users.map(u => u.email);
+            const coinBalances = await GwcCoinModel.find({ email: { $in: emails } }).lean();
+            const coinMap = new Map(coinBalances.map(c => [c.email, c.totalCoins]));
+
+            const data = users.map(u => ({
+                email: u.email,
+                totalCoins: coinMap.get(u.email) || 0
+            }));
+
+            return {
+                status: "success",
+                users: data,
+                pagination: {
+                    total,
+                    page,
+                    limit,
+                    totalPages: Math.ceil(total / limit)
+                }
+            };
+        } catch (error) {
+            throw error;
+        }
+    }
+
+    async manageGwcCoins(email: string, amount: number, type: 'add' | 'deduct') {
+        try {
+            const coinValueDoc = await CoinValueModel.findOne().sort({ createdAt: -1 }).lean();
+            const currentCoinValue = coinValueDoc ? coinValueDoc.currentValue : 1;
+
+            let userCoins = await GwcCoinModel.findOne({ email });
+            if (!userCoins && type === 'add') {
+                userCoins = new GwcCoinModel({ email, totalCoins: 0 });
+            } else if (!userCoins && type === 'deduct') {
+                throw new Error("User has no GWC coins to deduct.");
+            }
+
+            const changeAmount = type === 'add' ? amount : -amount;
+            if (type === 'deduct' && userCoins!.totalCoins < amount) {
+                throw new Error("Insufficient GWC coins for deduction.");
+            }
+
+            const updatedUserCoins = await GwcCoinModel.findOneAndUpdate(
+                { email },
+                { $inc: { totalCoins: changeAmount } },
+                { new: true, upsert: true }
+            );
+
+            // Log history
+            await GwcCoinHistoryModel.create({
+                email,
+                transactionType: type === 'add' ? 'admin_addition' : 'admin_deduction',
+                amount: changeAmount,
+                coinValue: currentCoinValue,
+                usdAmount: amount * currentCoinValue,
+                date: new Date()
+            });
+
+            return updatedUserCoins;
+        } catch (error) {
             throw error;
         }
     }
