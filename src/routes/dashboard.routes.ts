@@ -9,7 +9,8 @@ const dashboardController = new DashboardController();
 router.get("/user/getUsers/all", dashboardController.getAllUsers.bind(dashboardController));
 router.get("/deposit/getDeposit", dashboardController.getDeposits.bind(dashboardController));
 router.get("/withdraw/getWithdraw", dashboardController.getWithdrawals.bind(dashboardController));
-router.get("/transfer/getTransferall", dashboardController.getTransfers.bind(dashboardController));
+router.get("/transfer/getTransferall", dashboardController.getAllTransfersPaginated.bind(dashboardController));
+router.post("/transfer/admin/updateTransfer", dashboardController.updateTransfer.bind(dashboardController));
 router.get("/wallet/total-balance-excluding", dashboardController.getWalletBalance.bind(dashboardController));
 
 // Investment Routes

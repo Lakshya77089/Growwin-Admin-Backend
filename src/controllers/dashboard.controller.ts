@@ -364,4 +364,28 @@ export class DashboardController {
             res.status(500).json({ status: "error", message: "Error updating referral income", error });
         }
     }
+
+    async getAllTransfersPaginated(req: Request, res: Response) {
+        try {
+            const page = parseInt(req.query["page"] as string) || 1;
+            const limit = parseInt(req.query["limit"] as string) || 20;
+            const searchTerm = (req.query["searchTerm"] as string) || '';
+            const startDate = (req.query["startDate"] as string) || '';
+            const endDate = (req.query["endDate"] as string) || '';
+            const data = await dashboardService.getAllTransfersPaginated(page, limit, searchTerm, startDate, endDate);
+            res.json(data);
+        } catch (error) {
+            res.status(500).json({ status: "error", message: "Error fetching transfer data", error });
+        }
+    }
+
+    async updateTransfer(req: Request, res: Response) {
+        try {
+            const { owner, member, amount, date } = req.body;
+            const result = await dashboardService.updateTransfer(owner, member, amount, date);
+            res.json({ status: "success", result });
+        } catch (error) {
+            res.status(500).json({ status: "error", message: "Error updating transfer", error });
+        }
+    }
 }

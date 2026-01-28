@@ -1072,4 +1072,63 @@ export class DashboardService {
             throw error;
         }
     }
+
+    async getAllTransfersPaginated(page: number, limit: number, searchTerm?: string, startDate?: string, endDate?: string) {
+        try {
+            const skip = (page - 1) * limit;
+
+            // Date filtering
+            const dateMatch: any = {};
+            if (startDate || endDate) {
+                dateMatch.createdAt = {};
+                if (startDate) dateMatch.createdAt.$gte = new Date(startDate);
+                if (endDate) dateMatch.createdAt.$lte = new Date(endDate);
+            }
+
+            const searchMatch = searchTerm ? {
+                $or: [
+                    { owner: { $regex: searchTerm, $options: 'i' } },
+                    { member: { $regex: searchTerm, $options: 'i' } }
+                ]
+            } : {};
+
+            const matchQuery = { ...dateMatch, ...searchMatch };
+
+            // Count total
+            const total = await TransferModel.countDocuments(matchQuery);
+
+            // Fetch records
+            const docs = await TransferModel.find(matchQuery)
+                .sort({ createdAt: -1 })
+                .skip(skip)
+                .limit(limit)
+                .lean()
+                .exec();
+
+            return {
+                status: 'success',
+                page,
+                limit,
+                total,
+                totalPages: Math.ceil(total / limit),
+                Transfer: docs
+            };
+        } catch (error: any) {
+            console.error("Error in getAllTransfersPaginated:", error);
+            throw error;
+        }
+    }
+
+    async updateTransfer(owner: string, member: string, amount: string, createdAt: string) {
+        try {
+            const result = await TransferModel.updateOne(
+                { owner, member, createdAt: new Date(createdAt) },
+                { $set: { amount: parseFloat(amount) } }
+            );
+            return result;
+        } catch (error) {
+            console.error("Error in updateTransfer:", error);
+            throw error;
+        }
+    }
 }
