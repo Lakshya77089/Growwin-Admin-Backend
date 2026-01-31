@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import { DashboardService } from "../services/dashboard.service.js";
 import connectDB from "../utils/connectDB.js";
+import { createAuditLog } from "../utils/auditLogger.js";
 
 const dashboardService = new DashboardService();
 
@@ -22,10 +23,24 @@ export class DashboardController {
         try {
             const page = parseInt(req.query["page"] as string) || 1;
             const limit = parseInt(req.query["limit"] as string) || 20;
-            const deposits = await dashboardService.getDeposits(page, limit);
-            res.json(deposits);
+            const search = (req.query["search"] as string) || '';
+            const data = await dashboardService.getDeposits(page, limit, search);
+            res.json(data);
         } catch (error) {
             res.status(500).json({ status: "error", message: "Error fetching deposits", error });
+        }
+    }
+
+    async updateDeposit(req: any, res: Response) {
+        try {
+            const id = typeof req.params.id === 'string' ? req.params.id : '';
+            const { status } = req.body;
+            if (!id) throw new Error("Deposit ID is required");
+            const result = await dashboardService.updateDeposit(id, status);
+            await createAuditLog(req, 'UPDATE', 'Deposit', `Deposit ${status} for ID: ${id}`, id, null, undefined, result.oldData, result.updated);
+            res.json({ status: "success", data: result.updated });
+        } catch (error) {
+            res.status(500).json({ status: "error", message: "Error updating deposit", error });
         }
     }
 
@@ -33,8 +48,10 @@ export class DashboardController {
         try {
             const page = parseInt(req.query["page"] as string) || 1;
             const limit = parseInt(req.query["limit"] as string) || 20;
-            const withdrawals = await dashboardService.getWithdrawals(page, limit);
-            res.json(withdrawals);
+            const search = (req.query["search"] as string) || '';
+            const status = (req.query["status"] as string) || 'All';
+            const data = await dashboardService.getWithdrawals(page, limit, search, status);
+            res.json(data);
         } catch (error) {
             res.status(500).json({ status: "error", message: "Error fetching withdrawals", error });
         }
@@ -119,56 +136,87 @@ export class DashboardController {
         }
     }
 
-    async toggleUserStatus(req: Request, res: Response) {
+    async toggleUserStatus(req: any, res: Response) {
         try {
             const { email, active } = req.body;
-            const updated = await dashboardService.toggleUserStatus(email, active);
-            res.json({ status: "success", data: updated });
+            const result = await dashboardService.toggleUserStatus(email, active);
+            await createAuditLog(req, 'UPDATE', 'User', `User ${active ? 'activated' : 'deactivated'}: ${email}`, email, null, undefined, result.oldUser, result.updated);
+            res.json({ status: "success", data: result.updated });
         } catch (error) {
             res.status(500).json({ message: "Error toggling user status", error });
         }
     }
 
-    async editUser(req: Request, res: Response) {
+    async editUser(req: any, res: Response) {
         try {
-            const { email } = req.params;
+            const email = typeof req.params.email === 'string' ? req.params.email : '';
             const { name, number } = req.body;
-            const updated = await dashboardService.editUser(email as string, name, number);
-            res.json({ status: "success", user: updated });
+            if (!email) throw new Error("Email is required");
+            const result = await dashboardService.editUser(email, name, number);
+            await createAuditLog(req, 'UPDATE', 'User', `Edited user details for: ${email}`, email, null, undefined, result.oldUser, result.updated);
+            res.json({ status: "success", user: result.updated });
         } catch (error) {
             res.status(500).json({ message: "Error editing user", error });
         }
     }
 
-    async toggleInvestmentAllowed(req: Request, res: Response) {
+    async toggleInvestmentAllowed(req: any, res: Response) {
         try {
-            const { email } = req.params;
-            const updated = await dashboardService.toggleInvestmentAllowed(email as string);
-            res.json({ status: "success", data: updated });
+            const email = typeof req.params.email === 'string' ? req.params.email : '';
+            if (!email) throw new Error("Email is required");
+            const result = await dashboardService.toggleInvestmentAllowed(email);
+            await createAuditLog(req, 'UPDATE', 'Investment', `Toggled investment status for: ${email}`, email, null, undefined, result.oldUser, result.updated);
+            res.json({ status: "success", data: result.updated });
         } catch (error) {
             res.status(500).json({ message: "Error toggling investment status", error });
         }
     }
 
-    async verifyKYC(req: Request, res: Response) {
+    async verifyKYC(req: any, res: Response) {
         try {
             const { email } = req.params;
             const { status } = req.body;
-            const updated = await dashboardService.verifyKYC(email as string, status);
-            res.json({ status: "success", data: updated });
+            const result = await dashboardService.verifyKYC(email as string, status);
+            await createAuditLog(req, 'UPDATE', 'KYC', `KYC ${status} for email: ${email}`, email as string, null, undefined, result.oldData, result.updated);
+            res.json({ status: "success", data: result.updated });
         } catch (error) {
             res.status(500).json({ message: "Error verifying KYC", error });
         }
     }
 
-    async updateWithdrawal(req: Request, res: Response) {
+    async updateWithdrawal(req: any, res: Response) {
         try {
             const { id } = req.params;
-            const { withdrawStatus } = req.body; // Frontend uses withdrawStatus field
-            const updated = await dashboardService.updateWithdrawal(id as string, withdrawStatus);
-            res.json({ status: "success", data: { Withdraw: updated } });
+            const { withdrawStatus } = req.body;
+            const result = await dashboardService.updateWithdrawal(id as string, withdrawStatus);
+            await createAuditLog(req, 'UPDATE', 'Withdraw', `Withdrawal ${withdrawStatus} for ID: ${id}`, id as string, null, undefined, result.oldData, result.updated);
+            res.json({ status: "success", data: result.updated });
         } catch (error) {
-            res.status(500).json({ message: "Error updating withdrawal", error });
+            res.status(500).json({ status: "error", message: "Error updating withdrawal", error });
+        }
+    }
+
+    async closeInvestment(req: any, res: Response) {
+        try {
+            const email = typeof req.params.email === 'string' ? req.params.email : '';
+            if (!email) throw new Error("Email is required");
+            const result = await dashboardService.closeInvestment(email);
+            await createAuditLog(req, 'DELETE', 'Investment', `Closed investment for user: ${email}`, email);
+            res.json({ status: "success", ...result });
+        } catch (error: any) {
+            res.status(500).json({ status: "error", message: error.message || "Error closing investment" });
+        }
+    }
+
+    async closePlatinumInvestment(req: any, res: Response) {
+        try {
+            const email = typeof req.params.email === 'string' ? req.params.email : '';
+            if (!email) throw new Error("Email is required");
+            const result = await dashboardService.closePlatinumInvestment(email);
+            await createAuditLog(req, 'DELETE', 'PlatinumInvestment', `Closed platinum investment for user: ${email}`, email);
+            res.json({ status: "success", ...result });
+        } catch (error: any) {
+            res.status(500).json({ status: "error", message: error.message || "Error closing platinum investment" });
         }
     }
 
@@ -209,11 +257,12 @@ export class DashboardController {
         }
     }
 
-    async updateWallet(req: Request, res: Response) {
+    async updateWallet(req: any, res: Response) {
         try {
             const { email, amount } = req.body;
-            const updated = await dashboardService.updateWallet(email, amount);
-            res.json({ status: "success", data: { Withdraw: updated } }); // Matches some old logic expectations
+            const result = await dashboardService.updateWallet(email, amount);
+            await createAuditLog(req, 'UPDATE', 'Wallet', `Manually updated wallet for user: ${email}. New balance adjustment: ${amount}`, email, null, undefined, result.oldData, result.updated);
+            res.json({ status: "success", data: { Withdraw: result.updated } }); // Matches some old logic expectations
         } catch (error) {
             res.status(500).json({ message: "Error updating wallet", error });
         }
@@ -279,7 +328,7 @@ export class DashboardController {
         }
     }
 
-    async addGwcCoins(req: Request, res: Response) {
+    async addGwcCoins(req: any, res: Response) {
         try {
             const { email } = req.params;
             if (!email) {
@@ -287,13 +336,14 @@ export class DashboardController {
             }
             const { coinsToManage } = req.body;
             const result = await dashboardService.manageGwcCoins(String(email), coinsToManage, 'add');
-            res.json({ status: "success", totalCoins: result?.totalCoins });
+            await createAuditLog(req, 'UPDATE', 'GWC', `Added ${coinsToManage} GWC coins to: ${email}`, email, null, undefined, result.oldData, result.updated);
+            res.json({ status: "success", totalCoins: result.updated?.totalCoins });
         } catch (error) {
             res.status(500).json({ status: "error", message: "Error adding coins", error });
         }
     }
 
-    async deductGwcCoins(req: Request, res: Response) {
+    async deductGwcCoins(req: any, res: Response) {
         try {
             const { email } = req.params;
             if (!email) {
@@ -301,7 +351,8 @@ export class DashboardController {
             }
             const { coinsToManage } = req.body;
             const result = await dashboardService.manageGwcCoins(String(email), coinsToManage, 'deduct');
-            res.json({ status: "success", totalCoins: result?.totalCoins });
+            await createAuditLog(req, 'UPDATE', 'GWC', `Deducted ${coinsToManage} GWC coins from: ${email}`, email, null, undefined, result.oldData, result.updated);
+            res.json({ status: "success", totalCoins: result.updated?.totalCoins });
         } catch (error) {
             res.status(500).json({ status: "error", message: "Error deducting coins", error });
         }
@@ -342,13 +393,42 @@ export class DashboardController {
         }
     }
 
-    async login(req: Request, res: Response) {
+    async login(req: any, res: Response) {
         try {
             const { email, password } = req.body;
             const result = await dashboardService.login(email, password);
+
+            if (result.status === 'success') {
+                await createAuditLog(req, 'LOGIN', 'Admin', `Admin successfully logged in: ${email}`, result.userId, null, { id: result.userId, email: email });
+            } else {
+                // Log failed attempts or locks with explicit identity placeholders
+                await createAuditLog(req, 'SECURITY', 'Admin', `Failed login attempt or lock: ${email}. Reason: ${result.message}`, 'unknown', null, { id: 'UNAUTHENTICATED', email: email });
+            }
+
             res.json(result);
         } catch (error) {
             res.status(500).json({ message: "Error during login", error });
+        }
+    }
+
+    async logout(req: any, res: Response) {
+        try {
+            const email = req.user?.email || 'Unknown';
+            const userId = req.user?.id || 'Unknown';
+            await createAuditLog(req, 'LOGOUT', 'Admin', `Admin logged out: ${email}`, userId);
+            res.json({ status: "success", message: "Logged out successfully" });
+        } catch (error) {
+            res.status(500).json({ message: "Error during logout", error });
+        }
+    }
+
+    async getMe(req: any, res: Response) {
+        try {
+            const email = req.user.email;
+            const result = await dashboardService.getMe(email);
+            res.json(result);
+        } catch (error) {
+            res.status(500).json({ message: "Error fetching user info", error });
         }
     }
 
@@ -403,21 +483,23 @@ export class DashboardController {
         }
     }
 
-    async updateSelfIncome(req: Request, res: Response) {
+    async updateSelfIncome(req: any, res: Response) {
         try {
             const { email, income, date } = req.body;
             const result = await dashboardService.updateSelfIncome(email, income, date);
-            res.json({ status: "success", result });
+            await createAuditLog(req, 'UPDATE', 'Income', `Updated self income for: ${email}. Amount: ${income}`, email, null, undefined, result.oldData, result.updated);
+            res.json({ status: "success", result: result.updated });
         } catch (error) {
             res.status(500).json({ status: "error", message: "Error updating self income", error });
         }
     }
 
-    async updatePlatinumIncome(req: Request, res: Response) {
+    async updatePlatinumIncome(req: any, res: Response) {
         try {
             const { email, income, date } = req.body;
             const result = await dashboardService.updatePlatinumIncome(email, income, date);
-            res.json({ status: "success", result });
+            await createAuditLog(req, 'UPDATE', 'PlatinumIncome', `Updated platinum income for: ${email}. Amount: ${income}`, email, null, undefined, result.oldData, result.updated);
+            res.json({ status: "success", result: result.updated });
         } catch (error) {
             res.status(500).json({ status: "error", message: "Error updating platinum income", error });
         }
@@ -437,11 +519,12 @@ export class DashboardController {
         }
     }
 
-    async updateReferalIncome(req: Request, res: Response) {
+    async updateReferalIncome(req: any, res: Response) {
         try {
             const { owner, member, income, level, date } = req.body;
             const result = await dashboardService.updateReferalIncome(owner, member, income, level, date);
-            res.json({ status: "success", result });
+            await createAuditLog(req, 'UPDATE', 'ReferalIncome', `Updated referral income for owner: ${owner}, member: ${member}. Amount: ${income}`, owner, null, undefined, result.oldData, result.updated);
+            res.json({ status: "success", result: result.updated });
         } catch (error) {
             res.status(500).json({ status: "error", message: "Error updating referral income", error });
         }
@@ -461,11 +544,12 @@ export class DashboardController {
         }
     }
 
-    async updateTransfer(req: Request, res: Response) {
+    async updateTransfer(req: any, res: Response) {
         try {
             const { owner, member, amount, date } = req.body;
             const result = await dashboardService.updateTransfer(owner, member, amount, date);
-            res.json({ status: "success", result });
+            await createAuditLog(req, 'UPDATE', 'Transfer', `Updated transfer for owner: ${owner}, member: ${member}. Amount: ${amount}`, owner, null, undefined, result.oldData, result.updated);
+            res.json({ status: "success", result: result.updated });
         } catch (error) {
             res.status(500).json({ status: "error", message: "Error updating transfer", error });
         }
@@ -544,6 +628,151 @@ export class DashboardController {
                 message: "Error exporting shift history",
                 details: error instanceof Error ? error.message : 'Unknown error'
             });
+        }
+    }
+
+    async getInvestmentWithdrawals(req: Request, res: Response) {
+        try {
+            const page = parseInt(req.query["page"] as string) || 1;
+            const limit = parseInt(req.query["limit"] as string) || 20;
+            const search = (req.query["search"] as string) || '';
+            const data = await dashboardService.getInvestmentWithdrawals(page, limit, search);
+            res.json(data);
+        } catch (error: any) {
+            res.status(500).json({ status: "error", message: error.message || "Error fetching investment withdrawals", error });
+        }
+    }
+
+    async updateInvestmentWithdrawalStatus(req: any, res: Response) {
+        try {
+            const id = Array.isArray(req.params.id) ? req.params.id[0] : (req.params.id || '');
+            const { status } = req.body;
+            if (!id) throw new Error("Request ID is required");
+            const result = await dashboardService.updateInvestmentWithdrawalStatus(id as string, status);
+            await createAuditLog(req, 'UPDATE', 'InvestmentWithdrawal', `Investment withdrawal ${status} for ID: ${id}`, id as string, null, undefined, result.oldData, result.updated);
+            res.json({ status: "success", data: result.updated });
+        } catch (error: any) {
+            res.status(500).json({ status: "error", message: error.message || "Error updating investment withdrawal status", error });
+        }
+    }
+
+    // --- NEW PAGINATED CONTROLLERS ---
+
+    async getAllInvestsPaginated(req: Request, res: Response) {
+        try {
+            const page = parseInt(req.query["page"] as string) || 1;
+            const limit = parseInt(req.query["limit"] as string) || 20;
+            const search = (req.query["search"] as string) || '';
+            const data = await dashboardService.getAllInvestsPaginated(page, limit, search);
+            res.json(data);
+        } catch (error) {
+            res.status(500).json({ status: "error", message: "Error fetching investments", error });
+        }
+    }
+
+    async getAllInvestHistoryPaginated(req: Request, res: Response) {
+        try {
+            const page = parseInt(req.query["page"] as string) || 1;
+            const limit = parseInt(req.query["limit"] as string) || 20;
+            const search = (req.query["search"] as string) || '';
+            const data = await dashboardService.getAllInvestHistoryPaginated(page, limit, search);
+            res.json(data);
+        } catch (error) {
+            res.status(500).json({ status: "error", message: "Error fetching investment history", error });
+        }
+    }
+
+    async getPlatinumInvestorsPaginated(req: Request, res: Response) {
+        try {
+            const page = parseInt(req.query["page"] as string) || 1;
+            const limit = parseInt(req.query["limit"] as string) || 20;
+            const search = (req.query["search"] as string) || '';
+            const data = await dashboardService.getPlatinumInvestorsPaginated(page, limit, search);
+            res.json(data);
+        } catch (error) {
+            res.status(500).json({ status: "error", message: "Error fetching platinum investors", error });
+        }
+    }
+
+    async getPlatinumPaymentHistories(req: Request, res: Response) {
+        try {
+            const params = {
+                page: parseInt(req.query["page"] as string) || 1,
+                limit: parseInt(req.query["limit"] as string) || 10,
+                sortBy: (req.query["sortBy"] as string) || 'createdAt',
+                sortOrder: (req.query["sortOrder"] as string) || 'desc',
+                search: (req.query["search"] as string),
+                email: (req.query["email"] as string),
+                subscription: (req.query["subscription"] as string),
+                action: (req.query["action"] as string),
+                type: (req.query["type"] as string),
+                startDate: (req.query["startDate"] as string),
+                endDate: (req.query["endDate"] as string),
+            };
+            const data = await dashboardService.getPlatinumPaymentHistories(params);
+            res.json(data);
+        } catch (error) {
+            res.status(500).json({ status: "error", message: "Error fetching platinum histories", error });
+        }
+    }
+
+    async getPlatinumPaymentFilters(req: Request, res: Response) {
+        try {
+            const data = await dashboardService.getPlatinumPaymentFilters();
+            res.json(data);
+        } catch (error) {
+            res.status(500).json({ status: "error", message: "Error fetching platinum history filters", error });
+        }
+    }
+
+    async setup2FA(req: any, res: Response) {
+        try {
+            const email = req.user.email;
+            const result = await dashboardService.generate2FASecret(email);
+            await createAuditLog(req, 'UPDATE', 'Admin', `2FA Setup initiated for ${email}`, email);
+            res.json(result);
+        } catch (error: any) {
+            res.status(500).json({ status: "error", message: error.message });
+        }
+    }
+
+    async enable2FA(req: any, res: Response) {
+        try {
+            const email = req.user.email;
+            const { token } = req.body;
+            const result = await dashboardService.verify2FAAndEnable(email, token);
+            if (result.status === 'success') {
+                await createAuditLog(req, 'UPDATE', 'Admin', `2FA Enabled for ${email}`, email);
+            }
+            res.json(result);
+        } catch (error: any) {
+            res.status(500).json({ status: "error", message: error.message });
+        }
+    }
+
+    async disable2FAByAdmin(req: any, res: Response) {
+        try {
+            const email = req.user.email;
+            const result = await dashboardService.disable2FA(email);
+            await createAuditLog(req, 'UPDATE', 'Admin', `2FA Disabled for ${email}`, email);
+            res.json(result);
+        } catch (error: any) {
+            res.status(500).json({ status: "error", message: error.message });
+        }
+    }
+
+    async verify2FALogin(req: any, res: Response) {
+        try {
+            const { email, token, tempToken } = req.body;
+            const result = await dashboardService.verify2FALogin(email, token, tempToken);
+            if (result.status === 'success') {
+                await createAuditLog(req, 'LOGIN', 'Admin', `Admin completed 2FA login: ${email}`, result.userId, null, { id: result.userId, email });
+            } else {
+                await createAuditLog(req, 'SECURITY', 'Admin', `Failed 2FA verification: ${email}. Reason: ${result.message}`, 'unknown', null, { id: 'UNAUTHENTICATED', email });
+            }
+            res.json(result);
+        } catch (error: any) {
+            res.status(500).json({ status: "error", message: error.message });
         }
     }
 }

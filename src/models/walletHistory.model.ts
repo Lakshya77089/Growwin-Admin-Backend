@@ -2,10 +2,18 @@ import mongoose from "mongoose";
 
 const walletHistorySchema = new mongoose.Schema({
     email: { type: String, required: true },
-    previousAmount: { type: String, required: true },
-    updatedAmount: { type: String, required: true },
-    updateAmount: { type: String, required: true },
-    updateType: { type: String, required: true }, // 'credit' or 'debit'
+    previousAmount: { type: String },
+    updatedAmount: { type: String },
+    updateAmount: { type: String },
+    updateType: { type: String }, // 'credit' or 'debit'
+
+    // Fields expected by dashboard.service.ts
+    amount: { type: String },
+    type: { type: String }, // e.g. 'Refund', 'Withdrawal'
+    description: { type: String },
+    status: { type: String },
+    prevBalance: { type: String },
+    newBalance: { type: String },
 }, { timestamps: true, collection: "wallethistories" });
 
 walletHistorySchema.index({ email: 1 });

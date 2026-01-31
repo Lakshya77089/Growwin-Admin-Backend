@@ -1,4 +1,6 @@
 import UserModel from "../models/user.model.js";
+import jwt from 'jsonwebtoken';
+import bcrypt from 'bcrypt';
 import DepositModel from "../models/deposit.model.js";
 import WithdrawModel from "../models/withdraw.model.js";
 import TransferModel from "../models/transfer.model.js";
@@ -18,8 +20,14 @@ import GwcCoinModel from "../models/gwcCoin.model.js";
 import GwcCoinHistoryModel from "../models/gwcHistory.model.js";
 import CoinValueModel from "../models/coinValue.model.js";
 import InvestmentLotModel from "../models/investmentLot.model.js";
+import AdminRoleModel from "../models/adminRole.model.js";
 import ShiftHistoryModel from "../models/shiftHistory.model.js";
+import InvestmentWithdrawalModel from "../models/investmentWithdrawal.model.js";
+import InvestmentHistoryModel from "../models/investHistory.model.js";
+import PlatinumHistoryModel from "../models/platinumHistory.model.js";
 import { Decimal } from 'decimal.js';
+import { generateSecret, verify, generateURI } from 'otplib';
+import QRCode from 'qrcode';
 import { incomeSecurityGuard } from "../utils/incomeSecurity.js";
 
 export class DashboardService {
@@ -93,35 +101,41 @@ export class DashboardService {
 
     async getDeposits(page: number = 1, limit: number = 20, search: string = '') {
         try {
-            let query: any = {};
+            const skip = (page - 1) * limit;
+            let matchQuery: any = {};
+
             if (search) {
                 const searchRegex = new RegExp(search, 'i');
-                query.$or = [
+                matchQuery.$or = [
                     { email: searchRegex },
                     { orderid: searchRegex },
                     { txid: searchRegex }
                 ];
                 if (!isNaN(Number(search))) {
-                    query.$or.push({ amount: Number(search) });
+                    matchQuery.$or.push({ amount: Number(search) });
                 }
             }
 
-            const skip = (page - 1) * limit;
-            const total = await DepositModel.countDocuments(query);
-            const deposits = await DepositModel.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean();
+            const aggregation = await DepositModel.aggregate([
+                { $match: matchQuery },
+                { $sort: { createdAt: -1 } },
+                {
+                    $facet: {
+                        metadata: [{ $count: "total" }],
+                        data: [{ $skip: skip }, { $limit: limit }]
+                    }
+                }
+            ]);
 
-            const Deposit: any = {};
-            deposits.forEach((d, idx) => {
-                Deposit[`d${skip + idx}`] = {
-                    ...d,
-                    amount: d.amount.toString(),
-                    createdAt: d.createdAt
-                };
-            });
+            const total = aggregation[0].metadata[0]?.total || 0;
+            const deposits = aggregation[0].data.map((d: any) => ({
+                ...d,
+                amount: d.amount.toString()
+            }));
 
             return {
                 status: "success",
-                Deposit,
+                deposits,
                 pagination: {
                     total,
                     page,
@@ -134,36 +148,60 @@ export class DashboardService {
         }
     }
 
-    async getWithdrawals(page: number = 1, limit: number = 20, search: string = '') {
+    async updateDeposit(id: string, status: string) {
         try {
-            let query: any = {};
+            const oldData = await DepositModel.findById(id).lean();
+            const updated = await DepositModel.findByIdAndUpdate(
+                id,
+                { status },
+                { new: true }
+            );
+            return { oldData, updated };
+        } catch (error) {
+            throw error;
+        }
+    }
+
+    async getWithdrawals(page: number = 1, limit: number = 20, search: string = '', status: string = 'All') {
+        try {
+            const skip = (page - 1) * limit;
+            let matchQuery: any = {};
+
+            if (status && status !== 'All') {
+                matchQuery.status = status;
+            }
+
             if (search) {
                 const searchRegex = new RegExp(search, 'i');
-                query.$or = [
+                matchQuery.$or = [
                     { email: searchRegex },
                     { orderid: searchRegex }
                 ];
                 if (!isNaN(Number(search))) {
-                    query.$or.push({ amount: Number(search) });
+                    matchQuery.$or.push({ amount: Number(search) });
                 }
             }
 
-            const skip = (page - 1) * limit;
-            const total = await WithdrawModel.countDocuments(query);
-            const withdrawals = await WithdrawModel.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean();
+            const aggregation = await WithdrawModel.aggregate([
+                { $match: matchQuery },
+                { $sort: { createdAt: -1 } },
+                {
+                    $facet: {
+                        metadata: [{ $count: "total" }],
+                        data: [{ $skip: skip }, { $limit: limit }]
+                    }
+                }
+            ]);
 
-            const Withdraw: any = {};
-            withdrawals.forEach((w, idx) => {
-                Withdraw[`w${skip + idx}`] = {
-                    ...w,
-                    amount: w.amount.toString(),
-                    createdAt: w.createdAt
-                };
-            });
+            const total = aggregation[0].metadata[0]?.total || 0;
+            const withdrawals = aggregation[0].data.map((w: any) => ({
+                ...w,
+                amount: w.amount.toString()
+            }));
 
             return {
                 status: "success",
-                Withdraw,
+                withdrawals,
                 pagination: {
                     total,
                     page,
@@ -312,17 +350,7 @@ export class DashboardService {
                 'dukeplayindia@gmail.com', 'Bitforceinfotech@gmail.com'
             ];
 
-            const [
-                userCount,
-                walletStats,
-                depositStats,
-                withdrawStats,
-                transferStats,
-                investSummary,
-                platinumSummary,
-                activeInvestorsArr,
-                allUserEmails
-            ] = await Promise.all([
+            const result = await Promise.all([
                 UserModel.countDocuments({}),
                 WalletModel.aggregate([
                     { $match: { email: { $nin: excludedEmails } } },
@@ -376,8 +404,32 @@ export class DashboardService {
                     InvestModel.find({ isClosed: false }).distinct('email'),
                     PlatinumInvestModel.find({ isClosed: false }).distinct('email')
                 ]),
-                UserModel.find({}).distinct('email')
+                UserModel.find({}).distinct('email'),
+                ShiftHistoryModel.aggregate([
+                    {
+                        $group: {
+                            _id: null,
+                            totalAmount: { $sum: { $convert: { input: "$amount", to: "double", onError: 0, onNull: 0 } } },
+                            count: { $sum: 1 }
+                        }
+                    }
+                ])
             ]);
+
+            const [
+                userCount,
+                walletStats,
+                depositStats,
+                withdrawStats,
+                transferStats,
+                investSummary,
+                platinumSummary,
+                activeInvestorsArr,
+                allUserEmails,
+                shiftStatsResult
+            ] = result;
+
+            const shiftStats = shiftStatsResult[0] || { totalAmount: 0, count: 0 };
 
             const monthlyMap: Record<string, any> = {};
             const processData = (data: any[], key: string) => {
@@ -415,7 +467,9 @@ export class DashboardService {
                         normalInvestment: normalTotal,
                         platinumInvestment: platinumTotal,
                         activeInvestorsCount: activeSet.size,
-                        inactiveInvestorsCount: Math.max(0, allUserEmails.length - activeSet.size)
+                        inactiveInvestorsCount: Math.max(0, allUserEmails.length - activeSet.size),
+                        totalShiftAmount: shiftStats.totalAmount || 0,
+                        totalShiftCount: shiftStats.count || 0
                     },
                     chartData,
                     pieData: {
@@ -452,7 +506,14 @@ export class DashboardService {
 
     async toggleUserStatus(email: string, active: boolean) {
         try {
-            return await UserModel.findOneAndUpdate({ email }, { active }, { new: true }).lean();
+            const oldUser = await UserModel.findOne({ email }).lean();
+            // Reset login attempts and locks when toggling status
+            const updated = await UserModel.findOneAndUpdate(
+                { email },
+                { active, loginAttempts: 0, lockUntil: undefined },
+                { new: true }
+            ).lean();
+            return { oldUser, updated };
         } catch (error) {
             throw error;
         }
@@ -460,7 +521,9 @@ export class DashboardService {
 
     async editUser(email: string, name: string, number: string) {
         try {
-            return await UserModel.findOneAndUpdate({ email }, { name, number }, { new: true }).lean();
+            const oldUser = await UserModel.findOne({ email }).lean();
+            const updated = await UserModel.findOneAndUpdate({ email }, { name, number }, { new: true }).lean();
+            return { oldUser, updated };
         } catch (error) {
             throw error;
         }
@@ -468,11 +531,12 @@ export class DashboardService {
 
     async toggleInvestmentAllowed(email: string) {
         try {
+            const oldUser = await UserModel.findOne({ email }).lean();
             const user = (await UserModel.findOne({ email })) as any;
             if (!user) throw new Error("User not found");
             user.investmentAllowed = !user.investmentAllowed;
             await user.save();
-            return user;
+            return { oldUser, updated: user };
         } catch (error) {
             throw error;
         }
@@ -480,7 +544,9 @@ export class DashboardService {
 
     async verifyKYC(email: string, status: string) {
         try {
-            return await KYCModel.findOneAndUpdate({ email }, { status }, { new: true, upsert: true }).lean();
+            const oldData = await KYCModel.findOne({ email }).lean();
+            const updated = await KYCModel.findOneAndUpdate({ email }, { status }, { new: true, upsert: true }).lean();
+            return { oldData, updated };
         } catch (error) {
             throw error;
         }
@@ -488,7 +554,137 @@ export class DashboardService {
 
     async updateWithdrawal(id: string, status: string) {
         try {
-            return await WithdrawModel.findByIdAndUpdate(id, { status }, { new: true }).lean();
+            const oldData = await WithdrawModel.findById(id).lean();
+            const withdrawal = await WithdrawModel.findById(id);
+            if (!withdrawal) throw new Error("Withdrawal not found");
+
+            if (withdrawal.status === status) return { oldData, updated: withdrawal };
+
+            // If rejecting, refund to wallet
+            if ((status.toLowerCase() === 'rejected' || status.toLowerCase() === 'error') && withdrawal.status.toLowerCase() === 'pending') {
+                const wallet = await WalletModel.findOne({ email: withdrawal.email });
+                if (wallet) {
+                    const currentBalance = new Decimal(wallet.balance);
+                    const refundAmount = new Decimal(withdrawal.amount);
+                    const newBalance = currentBalance.plus(refundAmount);
+
+                    await WalletModel.updateOne(
+                        { email: withdrawal.email },
+                        { $set: { balance: newBalance.toFixed(8) } }
+                    );
+
+                    // Add wallet history for refund
+                    await WalletHistoryModel.create({
+                        email: withdrawal.email,
+                        amount: withdrawal.amount,
+                        type: 'Refund',
+                        description: `Withdrawal refund #${id}`,
+                        status: 'Success',
+                        prevBalance: currentBalance.toFixed(8),
+                        newBalance: newBalance.toFixed(8)
+                    });
+                }
+            }
+
+            withdrawal.status = status;
+            await withdrawal.save();
+            return { oldData, updated: withdrawal };
+        } catch (error) {
+            throw error;
+        }
+    }
+
+    async closeInvestment(email: string) {
+        try {
+            const investment = await InvestModel.findOne({ email, isClosed: false });
+            if (!investment) throw new Error("No active investment found for this user");
+
+            const wallet = await WalletModel.findOne({ email });
+            if (!wallet) throw new Error("User wallet not found");
+
+            let amount = new Decimal(investment.totalAmount);
+            const createdAt = investment.createdAt;
+            const now = new Date();
+
+            // Month calculation (approximation)
+            const diffTime = Math.abs(now.getTime() - createdAt.getTime());
+            const diffMonths = Math.floor(diffTime / (1000 * 60 * 60 * 24 * 30));
+
+            // Deductions
+            if (diffMonths < 6) {
+                amount = amount.mul(0.80); // 20% deduction
+            } else if (diffMonths < 12) {
+                amount = amount.mul(0.90); // 10% deduction
+            }
+
+            const currentBalance = new Decimal(wallet.balance);
+            const newBalance = currentBalance.plus(amount);
+
+            await WalletModel.updateOne({ email }, { $set: { balance: newBalance.toFixed(8) } });
+
+            // Mark investment closed
+            await InvestModel.updateOne({ _id: investment._id }, { $set: { isClosed: true } });
+
+            // Also mark lots as closed
+            await InvestmentLotModel.updateMany({ email, closed: false, plan: 'NORMAL' }, { $set: { closed: true } });
+
+            // Wallet history
+            await WalletHistoryModel.create({
+                email,
+                amount: amount.toFixed(8),
+                type: 'Invest Withdraw',
+                description: `Investment closed after ${diffMonths} months`,
+                status: 'Success',
+                prevBalance: currentBalance.toFixed(8),
+                newBalance: newBalance.toFixed(8)
+            });
+
+            return { success: true, amount: amount.toFixed(8), months: diffMonths };
+        } catch (error) {
+            throw error;
+        }
+    }
+
+    async closePlatinumInvestment(email: string) {
+        try {
+            const investment = await PlatinumInvestModel.findOne({ email, isClosed: false });
+            if (!investment) throw new Error("No active platinum investment found for this user");
+
+            const wallet = await WalletModel.findOne({ email });
+            if (!wallet) throw new Error("User wallet not found");
+
+            let amount = new Decimal(investment.totalAmount);
+            const createdAt = investment.createdAt;
+            const now = new Date();
+
+            const diffTime = Math.abs(now.getTime() - createdAt.getTime());
+            const diffMonths = Math.floor(diffTime / (1000 * 60 * 60 * 24 * 30));
+
+            // Deductions for platinum
+            if (diffMonths < 6) {
+                amount = amount.mul(0.80); // 20%
+            } else if (diffMonths < 12) {
+                amount = amount.mul(0.85); // 15%
+            }
+
+            const currentBalance = new Decimal(wallet.balance);
+            const newBalance = currentBalance.plus(amount);
+
+            await WalletModel.updateOne({ email }, { $set: { balance: newBalance.toFixed(8) } });
+            await PlatinumInvestModel.updateOne({ _id: investment._id }, { $set: { isClosed: true } });
+            await InvestmentLotModel.updateMany({ email, closed: false, plan: 'PLATINUM' }, { $set: { closed: true } });
+
+            await WalletHistoryModel.create({
+                email,
+                amount: amount.toFixed(8),
+                type: 'Platinum Withdraw',
+                description: `Platinum investment closed after ${diffMonths} months`,
+                status: 'Success',
+                prevBalance: currentBalance.toFixed(8),
+                newBalance: newBalance.toFixed(8)
+            });
+
+            return { success: true, amount: amount.toFixed(8), months: diffMonths };
         } catch (error) {
             throw error;
         }
@@ -525,7 +721,7 @@ export class DashboardService {
                 updateType: diff >= 0 ? 'credit' : 'debit'
             });
 
-            return result;
+            return { oldData: wallet, updated: result };
         } catch (error) {
             throw error;
         }
@@ -736,17 +932,109 @@ export class DashboardService {
 
     async login(email: string, password: string) {
         try {
-            // Basic login placeholder - in a real app, verify with bcrypt
+            const user = await UserModel.findOne({ email });
+            if (!user) return { status: "fail", message: "User not found" };
+
+            // Check if account is locked
+            if (user.lockUntil && user.lockUntil > Date.now()) {
+                const remainingMinutes = Math.ceil((user.lockUntil - Date.now()) / (60 * 1000));
+                return {
+                    status: "fail",
+                    message: `Account is temporarily locked due to multiple failed attempts. Please try again in ${remainingMinutes} minutes.`
+                };
+            }
+
+            // Verify password
+            const isPasswordValid = await bcrypt.compare(password, user.password || "");
+
+            if (!isPasswordValid) {
+                // Increment failed attempts
+                user.loginAttempts += 1;
+
+                if (user.loginAttempts >= 5) {
+                    user.lockUntil = Date.now() + (2 * 60 * 60 * 1000); // 2 hours
+                    await user.save();
+                    return {
+                        status: "fail",
+                        message: "Account locked for 2 hours due to 5 consecutive failed login attempts."
+                    };
+                }
+
+                await user.save();
+                const remaining = 5 - user.loginAttempts;
+                return {
+                    status: "fail",
+                    message: `Invalid password. ${remaining} attempts remaining before account lock.`
+                };
+            }
+
+            // Successful login - reset attempts
+            user.loginAttempts = 0;
+            (user as any).lockUntil = undefined;
+            await user.save();
+
+            // Fetch RBAC data
+            const adminRole = await AdminRoleModel.findOne({ email }).lean();
+            const role = adminRole ? adminRole.role : (user as any).role;
+            const permissions = adminRole ? adminRole.permissions : [];
+            const isSuperAdmin = role === 'Super Admin';
+
+            const secret = process.env['JWT_SECRET'] || 'growwin-dashboard-secret-key-2024';
+
+            // Check for 2FA
+            if (user.twoFactorEnabled) {
+                const tempToken = jwt.sign(
+                    { id: (user as any)._id, email: user.email, is2FAPending: true },
+                    secret,
+                    { expiresIn: '5m' }
+                );
+                return {
+                    status: "2fa_required",
+                    tempToken: tempToken,
+                    userId: (user as any)._id.toString(),
+                    email: user.email
+                };
+            }
+
+            // Issue a REAL JWT token
+            const access_token = jwt.sign(
+                { id: (user as any)._id, email: user.email, role: role, name: user.name },
+                secret,
+                { expiresIn: '1d' }
+            );
+
+            return {
+                status: "success",
+                access_token: access_token,
+                userId: (user as any)._id.toString(),
+                name: user.name,
+                role: role,
+                isSuperAdmin: isSuperAdmin,
+                permissions: permissions,
+                twoFactorEnabled: (user as any).twoFactorEnabled
+            };
+        } catch (error) {
+            throw error;
+        }
+    }
+
+    async getMe(email: string) {
+        try {
             const user = await UserModel.findOne({ email }).lean();
             if (!user) return { status: "fail", message: "User not found" };
 
-            // For now, accept any password if user exists (NOT SECURE - FOR DEMO MIGRATION)
+            const adminRole = await AdminRoleModel.findOne({ email }).lean();
+            const role = adminRole ? adminRole.role : (user as any).role;
+            const permissions = adminRole ? adminRole.permissions : [];
+            const isSuperAdmin = role === 'Super Admin';
+
             return {
                 status: "success",
-                access_token: "dummy-token-" + Date.now(),
                 name: user.name,
-                role: user.role,
-                permissions: [] // Super admin if empty as per frontend logic
+                role: role,
+                isSuperAdmin: isSuperAdmin,
+                permissions: permissions,
+                twoFactorEnabled: (user as any).twoFactorEnabled
             };
         } catch (error) {
             throw error;
@@ -1056,11 +1344,13 @@ export class DashboardService {
 
     async updateSelfIncome(email: string, income: string, createdAt: string) {
         try {
+            const oldData = await IncomeModel.findOne({ email, createdAt: new Date(createdAt) }).lean();
             const result = await IncomeModel.updateOne(
                 { email, createdAt: new Date(createdAt) },
                 { $set: { income: income.toString() } }
             );
-            return result;
+            const updated = await IncomeModel.findOne({ email, createdAt: new Date(createdAt) }).lean();
+            return { oldData, updated };
         } catch (error) {
             console.error("Error in updateSelfIncome:", error);
             throw error;
@@ -1069,11 +1359,13 @@ export class DashboardService {
 
     async updatePlatinumIncome(email: string, income: string, createdAt: string) {
         try {
+            const oldData = await PlatinumIncomeModel.findOne({ email, createdAt: new Date(createdAt) }).lean();
             const result = await PlatinumIncomeModel.updateOne(
                 { email, createdAt: new Date(createdAt) },
                 { $set: { income: income.toString() } }
             );
-            return result;
+            const updated = await PlatinumIncomeModel.findOne({ email, createdAt: new Date(createdAt) }).lean();
+            return { oldData, updated };
         } catch (error) {
             console.error("Error in updatePlatinumIncome:", error);
             throw error;
@@ -1153,11 +1445,13 @@ export class DashboardService {
 
     async updateReferalIncome(owner: string, member: string, income: string, level: string, createdAt: string) {
         try {
+            const oldData = await ReferalIncomeModel.findOne({ owner, member, level, createdAt: new Date(createdAt) }).lean();
             const result = await ReferalIncomeModel.updateOne(
                 { owner, member, level, createdAt: new Date(createdAt) },
                 { $set: { referalIncome: income.toString() } }
             );
-            return result;
+            const updated = await ReferalIncomeModel.findOne({ owner, member, level, createdAt: new Date(createdAt) }).lean();
+            return { oldData, updated };
         } catch (error) {
             console.error("Error in updateReferalIncome:", error);
             throw error;
@@ -1212,11 +1506,13 @@ export class DashboardService {
 
     async updateTransfer(owner: string, member: string, amount: string, createdAt: string) {
         try {
+            const oldData = await TransferModel.findOne({ owner, member, createdAt: new Date(createdAt) }).lean();
             const result = await TransferModel.updateOne(
                 { owner, member, createdAt: new Date(createdAt) },
                 { $set: { amount: parseFloat(amount) } }
             );
-            return result;
+            const updated = await TransferModel.findOne({ owner, member, createdAt: new Date(createdAt) }).lean();
+            return { oldData, updated };
         } catch (error) {
             console.error("Error in updateTransfer:", error);
             throw error;
@@ -1315,7 +1611,7 @@ export class DashboardService {
                 date: new Date()
             });
 
-            return updatedUserCoins;
+            return { oldData: userCoins ? { totalCoins: userCoins.totalCoins } : null, updated: updatedUserCoins };
         } catch (error) {
             throw error;
         }
@@ -1753,17 +2049,17 @@ export class DashboardService {
 
             // Filter by fromPlan
             if (params.fromPlan && typeof params.fromPlan === 'string' && params.fromPlan.trim()) {
-                filter.fromPlan = params.fromPlan.trim().toUpperCase();
+                filter.fromPlan = { $regex: `^${params.fromPlan.trim()}$`, $options: 'i' };
             }
 
             // Filter by toPlan
             if (params.toPlan && typeof params.toPlan === 'string' && params.toPlan.trim()) {
-                filter.toPlan = params.toPlan.trim().toUpperCase();
+                filter.toPlan = { $regex: `^${params.toPlan.trim()}$`, $options: 'i' };
             }
 
             // Filter by status
             if (params.status && typeof params.status === 'string' && params.status.trim()) {
-                filter.status = params.status.trim().toUpperCase();
+                filter.status = { $regex: `^${params.status.trim()}$`, $options: 'i' };
             }
 
             // Date range filter
@@ -1822,16 +2118,8 @@ export class DashboardService {
 
             // Format response data
             const formattedHistory = history.map(record => ({
-                id: record._id.toString(),
-                email: record.email,
-                fromPlan: record.fromPlan,
-                toPlan: record.toPlan,
-                amount: record.amount,
-                status: record.status,
-                createdAt: record.createdAt,
-                metadata: record.metadata || {},
-                fromInvestId: record.fromInvestId,
-                toInvestId: record.toInvestId,
+                ...record,
+                id: (record as any)._id?.toString() || '',
                 // Add derived fields for easier frontend display
                 formattedAmount: this.formatCurrency(record.amount),
                 timeAgo: this.getTimeAgo(record.createdAt)
@@ -1884,37 +2172,48 @@ export class DashboardService {
             const pipeline = [
                 { $match: filter },
                 {
-                    $group: {
-                        _id: null,
-                        totalTransfers: { $sum: 1 },
-                        totalAmount: {
-                            $sum: {
-                                $convert: {
-                                    input: "$amount",
-                                    to: "double",
-                                    onError: 0,
-                                    onNull: 0
+                    $facet: {
+                        basicStats: [
+                            {
+                                $group: {
+                                    _id: null,
+                                    totalTransfers: { $sum: 1 },
+                                    totalAmount: {
+                                        $sum: {
+                                            $convert: {
+                                                input: "$amount",
+                                                to: "double",
+                                                onError: 0,
+                                                onNull: 0
+                                            }
+                                        }
+                                    },
+                                    successCount: {
+                                        $sum: { $cond: [{ $eq: ["$status", "SUCCESS"] }, 1, 0] }
+                                    },
+                                    failedCount: {
+                                        $sum: { $cond: [{ $eq: ["$status", "FAILED"] }, 1, 0] }
+                                    },
+                                    partialCount: {
+                                        $sum: { $cond: [{ $eq: ["$status", "PARTIAL"] }, 1, 0] }
+                                    }
                                 }
                             }
-                        },
-                        successCount: {
-                            $sum: { $cond: [{ $eq: ["$status", "SUCCESS"] }, 1, 0] }
-                        },
-                        failedCount: {
-                            $sum: { $cond: [{ $eq: ["$status", "FAILED"] }, 1, 0] }
-                        },
-                        partialCount: {
-                            $sum: { $cond: [{ $eq: ["$status", "PARTIAL"] }, 1, 0] }
-                        },
-                        byFromPlan: { $push: "$fromPlan" },
-                        byToPlan: { $push: "$toPlan" }
+                        ],
+                        fromPlanDist: [
+                            { $group: { _id: "$fromPlan", count: { $sum: 1 } } }
+                        ],
+                        toPlanDist: [
+                            { $group: { _id: "$toPlan", count: { $sum: 1 } } }
+                        ]
                     }
                 }
             ];
 
-            const result = await ShiftHistoryModel.aggregate(pipeline);
+            const results = await ShiftHistoryModel.aggregate(pipeline);
+            const result = results[0];
 
-            if (result.length === 0) {
+            if (!result || !result.basicStats || result.basicStats.length === 0) {
                 return {
                     totalTransfers: 0,
                     totalAmount: 0,
@@ -1928,18 +2227,18 @@ export class DashboardService {
                 };
             }
 
-            const stats = result[0];
+            const stats = result.basicStats[0];
 
-            // Calculate plan distributions
+            // Convert distribution arrays to records
             const fromPlanCounts: Record<string, number> = {};
             const toPlanCounts: Record<string, number> = {};
 
-            stats.byFromPlan?.forEach((plan: string) => {
-                fromPlanCounts[plan] = (fromPlanCounts[plan] || 0) + 1;
+            result.fromPlanDist.forEach((item: any) => {
+                if (item._id) fromPlanCounts[item._id] = item.count;
             });
 
-            stats.byToPlan?.forEach((plan: string) => {
-                toPlanCounts[plan] = (toPlanCounts[plan] || 0) + 1;
+            result.toPlanDist.forEach((item: any) => {
+                if (item._id) toPlanCounts[item._id] = item.count;
             });
 
             const successRate = stats.totalTransfers > 0
@@ -2076,15 +2375,15 @@ export class DashboardService {
             }
 
             if (params.fromPlan && typeof params.fromPlan === 'string' && params.fromPlan.trim()) {
-                filter.fromPlan = params.fromPlan.trim().toUpperCase();
+                filter.fromPlan = { $regex: `^${params.fromPlan.trim()}$`, $options: 'i' };
             }
 
             if (params.toPlan && typeof params.toPlan === 'string' && params.toPlan.trim()) {
-                filter.toPlan = params.toPlan.trim().toUpperCase();
+                filter.toPlan = { $regex: `^${params.toPlan.trim()}$`, $options: 'i' };
             }
 
             if (params.status && typeof params.status === 'string' && params.status.trim()) {
-                filter.status = params.status.trim().toUpperCase();
+                filter.status = { $regex: `^${params.status.trim()}$`, $options: 'i' };
             }
 
             if (params.startDate || params.endDate) {
@@ -2142,6 +2441,583 @@ export class DashboardService {
             return csv;
         } catch (error) {
             console.error('Error in exportShiftHistoryCSV:', error);
+        }
+    }
+
+    async getInvestmentWithdrawals(page: number = 1, limit: number = 20, search: string = '') {
+        try {
+            const skip = (page - 1) * limit;
+            let matchQuery: any = {};
+
+            if (search) {
+                const searchRegex = new RegExp(search, 'i');
+                matchQuery.$or = [
+                    { email: searchRegex },
+                    { fullName: searchRegex }
+                ];
+            }
+
+            const aggregation = await InvestmentWithdrawalModel.aggregate([
+                { $match: matchQuery },
+                { $sort: { createdAt: -1 } },
+                {
+                    $facet: {
+                        metadata: [{ $count: "total" }],
+                        data: [{ $skip: skip }, { $limit: limit }]
+                    }
+                }
+            ]);
+
+            const total = aggregation[0].metadata[0]?.total || 0;
+            const withdrawalsList = aggregation[0].data;
+
+            const enhancedWithdrawals = await Promise.all(
+                withdrawalsList.map(async (withdrawal: any) => {
+                    let finalAmountCredited = withdrawal.withdrawalAmount;
+                    let daysSinceInvestment = 0;
+                    let deductionPercentage = 0;
+
+                    if (
+                        (withdrawal.status === 'approved' || withdrawal.status === 'processing') &&
+                        (withdrawal.subscriptionPlan === 'Basic' || withdrawal.subscriptionPlan === 'Classic')
+                    ) {
+                        const investment: any = await InvestModel.findOne({
+                            email: withdrawal.email,
+                            isClosed: false,
+                            subscription: withdrawal.subscriptionPlan,
+                        });
+
+                        if (investment) {
+                            const creationDate = new Date(investment.createdAt);
+                            const currentDate = new Date();
+                            daysSinceInvestment = Math.floor(
+                                (currentDate.getTime() - creationDate.getTime()) / (1000 * 60 * 60 * 24)
+                            );
+
+                            if (daysSinceInvestment < 180) {
+                                deductionPercentage = 0.2; // 20% deduction
+                            } else if (daysSinceInvestment < 365) {
+                                deductionPercentage = 0.1; // 10% deduction
+                            } else {
+                                deductionPercentage = 0; // No deduction
+                            }
+
+                            const deductionAmount = withdrawal.withdrawalAmount * deductionPercentage;
+                            finalAmountCredited = withdrawal.withdrawalAmount - deductionAmount;
+                        }
+                    }
+
+                    // Convert to plain object if it's a mongoose doc, though aggregation returns POJO
+                    return {
+                        ...withdrawal,
+                        finalAmountCredited,
+                        daysSinceInvestment,
+                        deductionPercentage: deductionPercentage * 100,
+                    };
+                })
+            );
+
+            return {
+                status: "success",
+                data: enhancedWithdrawals,
+                pagination: {
+                    total,
+                    page,
+                    limit,
+                    totalPages: Math.ceil(total / limit)
+                }
+            };
+        } catch (error) {
+            throw error;
+        }
+    }
+
+    async updateInvestmentWithdrawalStatus(id: string, status: string) {
+        try {
+            if (!['approved', 'rejected', 'verified'].includes(status)) {
+                throw new Error('Invalid status. Allowed statuses: approved, rejected, verified');
+            }
+
+            const updatedRequest = await InvestmentWithdrawalModel.findById(id);
+            if (!updatedRequest) {
+                throw new Error('Request not found');
+            }
+
+            const oldData = updatedRequest.toObject();
+
+            updatedRequest.status = status as any;
+            let finalAmountToAdd = updatedRequest.withdrawalAmount;
+            let daysSinceCreation = 0;
+            let deductionPercentage = 0;
+
+            if (status === 'approved') {
+                const { email, withdrawalAmount, subscriptionPlan } = updatedRequest;
+                const wallet = await WalletModel.findOne({ email });
+                if (!wallet) throw new Error('User wallet not found');
+
+                let currentBalance = new Decimal(wallet.balance || 0);
+
+                if (subscriptionPlan === 'Basic' || subscriptionPlan === 'Classic') {
+                    const investment: any = await InvestModel.findOne({
+                        email,
+                        isClosed: false,
+                        subscription: subscriptionPlan,
+                    });
+
+                    if (!investment) throw new Error('Active investment not found');
+
+                    let investmentAmount = new Decimal(investment.totalAmount);
+                    const creationDate = new Date(investment.createdAt);
+                    const currentDate = new Date();
+                    daysSinceCreation = Math.floor(
+                        (currentDate.getTime() - creationDate.getTime()) / (1000 * 60 * 60 * 24)
+                    );
+
+                    if (daysSinceCreation < 180) {
+                        deductionPercentage = 0.2;
+                    } else if (daysSinceCreation < 365) {
+                        deductionPercentage = 0.1;
+                    }
+
+                    if (investmentAmount.lt(withdrawalAmount)) {
+                        throw new Error('Insufficient investment amount');
+                    }
+
+                    // Deduct from NORMAL lots FIFO
+                    let remainingToDeduct = new Decimal(withdrawalAmount);
+                    const normalLots = await InvestmentLotModel.find({ email, plan: 'NORMAL', closed: false })
+                        .sort({ investDate: 1, createdAt: 1 });
+
+                    for (const lot of normalLots) {
+                        if (remainingToDeduct.lte(0)) break;
+                        let lotAmt = new Decimal(lot.amount || '0');
+
+                        if (lotAmt.lte(remainingToDeduct)) {
+                            remainingToDeduct = remainingToDeduct.minus(lotAmt);
+                            lot.amount = '0';
+                            lot.closed = true;
+                        } else {
+                            lot.amount = lotAmt.minus(remainingToDeduct).toFixed(8);
+                            remainingToDeduct = new Decimal(0);
+                        }
+                        await lot.save();
+                    }
+
+                    investmentAmount = investmentAmount.minus(withdrawalAmount);
+                    investment.totalAmount = investmentAmount.toFixed(8);
+                    if (investmentAmount.lte(0)) investment.isClosed = true;
+                    await investment.save();
+
+                    const deductionAmount = new Decimal(withdrawalAmount).mul(deductionPercentage);
+                    finalAmountToAdd = new Decimal(withdrawalAmount).minus(deductionAmount).toNumber();
+
+                    currentBalance = currentBalance.plus(finalAmountToAdd);
+                    wallet.balance = currentBalance.toFixed(8);
+                    await WalletModel.updateOne({ email }, { $set: { balance: wallet.balance } });
+
+                    await WalletHistoryModel.create({
+                        email,
+                        amount: finalAmountToAdd.toString(),
+                        type: 'Invest Withdraw',
+                        description: `Investment Withdrawal approved (${subscriptionPlan})`,
+                        status: 'Success',
+                        prevBalance: currentBalance.minus(finalAmountToAdd).toFixed(8),
+                        newBalance: currentBalance.toFixed(8)
+                    });
+                } else {
+                    currentBalance = currentBalance.plus(withdrawalAmount);
+                    wallet.balance = currentBalance.toFixed(8);
+                    await WalletModel.updateOne({ email }, { $set: { balance: wallet.balance } });
+                }
+            }
+
+            await updatedRequest.save();
+            const responseData = {
+                ...updatedRequest.toObject(),
+                finalAmountCredited: finalAmountToAdd,
+                daysSinceInvestment: daysSinceCreation,
+                deductionPercentage: deductionPercentage * 100,
+            };
+            return { oldData, updated: responseData };
+        } catch (error) {
+            throw error;
+        }
+    }
+
+    // --- NEW PAGINATED SERVICES ---
+
+    async getAllInvestsPaginated(page: number = 1, limit: number = 20, search: string = '') {
+        try {
+            const skip = (page - 1) * limit;
+            let query: any = { isClosed: false };
+
+            if (search) {
+                query.email = { $regex: search, $options: 'i' };
+            }
+
+            const aggregation = await InvestModel.aggregate([
+                { $match: query },
+                { $sort: { createdAt: -1 } },
+                {
+                    $facet: {
+                        metadata: [{ $count: "total" }],
+                        data: [{ $skip: skip }, { $limit: limit }]
+                    }
+                }
+            ]);
+
+            const total = aggregation[0].metadata[0]?.total || 0;
+            return {
+                status: "success",
+                data: aggregation[0].data,
+                pagination: {
+                    total,
+                    page,
+                    limit,
+                    totalPages: Math.ceil(total / limit)
+                }
+            };
+        } catch (error) {
+            throw error;
+        }
+    }
+
+    async getAllInvestHistoryPaginated(page: number = 1, limit: number = 20, search: string = '') {
+        try {
+            const skip = (page - 1) * limit;
+            let query: any = {};
+
+            if (search) {
+                query.email = { $regex: search, $options: 'i' };
+            }
+
+            const aggregation = await InvestmentHistoryModel.aggregate([
+                { $match: query },
+                { $sort: { createdAt: -1 } },
+                {
+                    $facet: {
+                        metadata: [{ $count: "total" }],
+                        data: [{ $skip: skip }, { $limit: limit }]
+                    }
+                }
+            ]);
+
+            const total = aggregation[0].metadata[0]?.total || 0;
+            return {
+                status: "success",
+                data: aggregation[0].data,
+                pagination: {
+                    total,
+                    page,
+                    limit,
+                    totalPages: Math.ceil(total / limit)
+                }
+            };
+        } catch (error) {
+            throw error;
+        }
+    }
+
+    async getPlatinumInvestorsPaginated(page: number = 1, limit: number = 20, search: string = '') {
+        try {
+            const skip = (page - 1) * limit;
+            let query: any = { isClosed: false };
+
+            if (search) {
+                query.email = { $regex: search, $options: 'i' };
+            }
+
+            const aggregation = await PlatinumInvestModel.aggregate([
+                { $match: query },
+                { $sort: { createdAt: -1 } },
+                {
+                    $facet: {
+                        metadata: [{ $count: "total" }],
+                        data: [{ $skip: skip }, { $limit: limit }]
+                    }
+                }
+            ]);
+
+            const total = aggregation[0].metadata[0]?.total || 0;
+            return {
+                status: "success",
+                data: aggregation[0].data,
+                pagination: {
+                    total,
+                    page,
+                    limit,
+                    totalPages: Math.ceil(total / limit)
+                }
+            };
+        } catch (error) {
+            throw error;
+        }
+    }
+
+    async getPlatinumPaymentHistories(params: {
+        page?: number;
+        limit?: number;
+        sortBy?: string;
+        sortOrder?: string;
+        search?: string;
+        email?: string;
+        subscription?: string;
+        action?: string;
+        type?: string;
+        startDate?: string;
+        endDate?: string;
+    }) {
+        try {
+            const {
+                page = 1,
+                limit = 10,
+                sortBy = 'createdAt',
+                sortOrder = 'desc',
+                search,
+                email,
+                subscription,
+                action,
+                type,
+                startDate,
+                endDate
+            } = params;
+
+            const query: any = {};
+
+            if (email) query.email = { $regex: email, $options: 'i' };
+            if (subscription) query.subscription = subscription;
+            if (action) query.action = action;
+            if (type) query.type = type;
+
+            if (startDate || endDate) {
+                const dateQuery: any = {};
+                if (startDate) dateQuery.$gte = new Date(startDate);
+                if (endDate) {
+                    const end = new Date(endDate);
+                    end.setHours(23, 59, 59, 999);
+                    dateQuery.$lte = end;
+                }
+                query.createdAt = dateQuery;
+            }
+
+            if (search) {
+                query.$or = [
+                    { email: { $regex: search, $options: 'i' } },
+                    { subscription: { $regex: search, $options: 'i' } },
+                    { action: { $regex: search, $options: 'i' } },
+                    { type: { $regex: search, $options: 'i' } }
+                ];
+            }
+
+            const sort: any = {};
+            sort[sortBy] = sortOrder === 'asc' ? 1 : -1;
+            const skip = (page - 1) * limit;
+
+            const [histories, totalCount, summaryAggregation, userRankings] = await Promise.all([
+                PlatinumHistoryModel.find(query).sort(sort).skip(skip).limit(limit).lean(),
+                PlatinumHistoryModel.countDocuments(query),
+                PlatinumHistoryModel.aggregate([
+                    { $match: query },
+                    {
+                        $group: {
+                            _id: null,
+                            totalTransactions: { $sum: 1 },
+                            totalCredit: {
+                                $sum: {
+                                    $cond: [{ $eq: ['$type', 'credit'] }, { $toDouble: '$amount' }, 0]
+                                }
+                            },
+                            totalDebit: {
+                                $sum: {
+                                    $cond: [{ $eq: ['$type', 'debit'] }, { $toDouble: '$amount' }, 0]
+                                }
+                            },
+                            uniqueUsers: { $addToSet: '$email' }
+                        }
+                    }
+                ]),
+                PlatinumHistoryModel.aggregate([
+                    { $match: query },
+                    {
+                        $group: {
+                            _id: '$email',
+                            totalInvestments: { $sum: 1 },
+                            totalAmount: { $sum: { $toDouble: '$amount' } },
+                            latestInvestment: { $max: '$createdAt' },
+                            firstInvestment: { $min: '$createdAt' }
+                        }
+                    },
+                    { $sort: { totalAmount: -1 } },
+                    { $limit: 10 }
+                ])
+            ]);
+
+            const summary = summaryAggregation[0] || {
+                totalTransactions: 0,
+                totalCredit: 0,
+                totalDebit: 0,
+                uniqueUsers: []
+            };
+
+            return {
+                status: "success",
+                data: {
+                    histories,
+                    pagination: {
+                        currentPage: page,
+                        totalPages: Math.ceil(totalCount / limit),
+                        totalItems: totalCount,
+                        itemsPerPage: limit
+                    },
+                    summary: {
+                        totalTransactions: summary.totalTransactions,
+                        totalCredit: (summary.totalCredit || 0).toFixed(2),
+                        totalDebit: (summary.totalDebit || 0).toFixed(2),
+                        netBalance: ((summary.totalCredit || 0) - (summary.totalDebit || 0)).toFixed(2),
+                        uniqueUsersCount: summary.uniqueUsers?.length || 0
+                    },
+                    userSummary: userRankings
+                }
+            };
+        } catch (error) {
+            throw error;
+        }
+    }
+
+    async getPlatinumPaymentFilters() {
+        try {
+            const filters = await PlatinumHistoryModel.aggregate([
+                {
+                    $facet: {
+                        emails: [{ $group: { _id: '$email' } }, { $sort: { _id: 1 } }, { $limit: 100 }],
+                        subscriptions: [{ $group: { _id: '$subscription' } }, { $sort: { _id: 1 } }],
+                        actions: [{ $group: { _id: '$action' } }, { $sort: { _id: 1 } }],
+                        types: [{ $group: { _id: '$type' } }, { $sort: { _id: 1 } }]
+                    }
+                }
+            ]);
+
+            return {
+                status: "success",
+                data: {
+                    emails: filters[0].emails.map((e: any) => e._id),
+                    subscriptions: filters[0].subscriptions.map((s: any) => s._id),
+                    actions: filters[0].actions.map((a: any) => a._id),
+                    types: filters[0].types.map((t: any) => t._id)
+                }
+            };
+        } catch (error) {
+            throw error;
+        }
+    }
+
+    async generate2FASecret(email: string) {
+        try {
+            const user = await UserModel.findOne({ email });
+            if (!user) throw new Error("User not found");
+
+            const secret = generateSecret();
+            const otpauth = generateURI({ issuer: 'Growwin Admin', label: email, secret });
+            const qrCodeDataURL = await QRCode.toDataURL(otpauth);
+
+            user.twoFactorSecret = secret;
+            await user.save();
+
+            return {
+                status: "success",
+                secret,
+                qrCodeDataURL
+            };
+        } catch (error) {
+            throw error;
+        }
+    }
+
+    async verify2FAAndEnable(email: string, token: string) {
+        try {
+            const user = await UserModel.findOne({ email });
+            if (!user) throw new Error("User not found");
+            if (!user.twoFactorSecret) throw new Error("2FA setup not initiated");
+
+            const isValid = await verify({
+                token,
+                secret: user.twoFactorSecret
+            });
+
+            if (!isValid.valid) return { status: "fail", message: "Invalid 2FA token" };
+
+            user.twoFactorEnabled = true;
+            await user.save();
+
+            return { status: "success", message: "2FA enabled successfully" };
+        } catch (error) {
+            throw error;
+        }
+    }
+
+    async disable2FA(email: string) {
+        try {
+            const user = await UserModel.findOne({ email });
+            if (!user) throw new Error("User not found");
+
+            user.twoFactorEnabled = false;
+            (user as any).twoFactorSecret = undefined;
+            await user.save();
+
+            return { status: "success", message: "2FA disabled successfully" };
+        } catch (error) {
+            throw error;
+        }
+    }
+
+    async verify2FALogin(email: string, token: string, tempToken: string) {
+        try {
+            const secretKey = process.env['JWT_SECRET'] || 'growwin-dashboard-secret-key-2024';
+            let decoded: any;
+            try {
+                decoded = jwt.verify(tempToken, secretKey);
+            } catch (err) {
+                return { status: "fail", message: "Session expired or invalid. Please login again." };
+            }
+
+            if (decoded.email !== email || !decoded.is2FAPending) {
+                return { status: "fail", message: "Invalid session" };
+            }
+
+            const user = await UserModel.findOne({ email });
+            if (!user || !user.twoFactorSecret) return { status: "fail", message: "User configuration error" };
+
+            const isValid = await verify({
+                token,
+                secret: user.twoFactorSecret
+            });
+
+            if (!isValid.valid) return { status: "fail", message: "Invalid 2FA token" };
+
+            // Fetch RBAC data
+            const adminRole = await AdminRoleModel.findOne({ email }).lean();
+            const role = adminRole ? adminRole.role : (user as any).role;
+            const permissions = adminRole ? adminRole.permissions : [];
+            const isSuperAdmin = role === 'Super Admin';
+
+            // Issue a REAL JWT token
+            const access_token = jwt.sign(
+                { id: (user as any)._id, email: user.email, role: role, name: user.name },
+                secretKey,
+                { expiresIn: '1d' }
+            );
+
+            return {
+                status: "success",
+                access_token: access_token,
+                userId: (user as any)._id.toString(),
+                name: user.name,
+                role: role,
+                isSuperAdmin: isSuperAdmin,
+                permissions: permissions,
+                twoFactorEnabled: (user as any).twoFactorEnabled
+            };
+        } catch (error) {
             throw error;
         }
     }

@@ -30,12 +30,12 @@ const ShiftHistorySchema = new Schema<IShiftHistory>({
     fromPlan: {
         type: String,
         required: true,
-        enum: ['BASIC', 'CLASSIC', 'NORMAL', 'CLASSIC_PLUS', 'PLATINUM', 'UNKNOWN']
+        trim: true
     },
     toPlan: {
         type: String,
         required: true,
-        enum: ['PLATINUM', 'BASIC', 'CLASSIC', 'CLASSIC_PLUS', 'NORMAL']
+        trim: true
     },
     amount: {
         type: String,
@@ -66,7 +66,7 @@ const ShiftHistorySchema = new Schema<IShiftHistory>({
     }
 }, {
     timestamps: true,
-    collection: 'ShiftHistories'
+    collection: 'shifthistories'
 });
 
 // Optimized compound indexes
