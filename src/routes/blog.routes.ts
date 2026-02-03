@@ -21,9 +21,16 @@ router.use(protect);
 // Multer configuration for blog images
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
-        const dir = 'uploads/blogs';
+        const isVercel = !!process.env.VERCEL;
+        const dir = isVercel ? path.join('/tmp', 'uploads', 'blogs') : 'uploads/blogs';
+
         if (!fs.existsSync(dir)) {
-            fs.mkdirSync(dir, { recursive: true });
+            try {
+                fs.mkdirSync(dir, { recursive: true });
+            } catch (err) {
+                console.error('Error creating directory:', err);
+                return cb(null, '/tmp');
+            }
         }
         cb(null, dir);
     },
