@@ -24,9 +24,10 @@ const PORT = process.env["PORT"] || 3000;
 app.use(express.json());
 // CORS Middleware
 app.use(cors({
-    origin: '*',
+    origin: true, // Requests will include the Origin header
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-    allowedHeaders: ['Content-Type', 'Authorization']
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+    credentials: true
 }));
 
 // Serve uploads folder
