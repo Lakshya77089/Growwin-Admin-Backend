@@ -1,6 +1,8 @@
 .env
 node_modules
 package-lock.json
+dist/
+backups/
 
 # Firebase Admin Secret
 src/config/firebase-service-account.json
