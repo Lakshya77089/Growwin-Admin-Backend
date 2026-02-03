@@ -5,4 +5,4 @@ dist/
 backups/
 
 # Firebase Admin Secret
-src/config/firebase-service-account.json
+# src/config/firebase-service-account.json
