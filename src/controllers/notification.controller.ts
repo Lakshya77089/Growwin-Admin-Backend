@@ -1,36 +1,10 @@
-
-
 import type { Request, Response } from 'express';
-import admin from 'firebase-admin';
-import path from 'path';
-import fs from 'fs';
-import { fileURLToPath } from 'url';
+import { getFirestore, getMessaging } from '../utils/firebase.js';
 import { createAuditLog } from '../utils/auditLogger.js';
+import admin from 'firebase-admin';
 
-// Initialize Firebase
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// Ensure the path to the service account file is correct relative to the compiled/running file
-// We saved it in src/config/, so it should be available dist/config/ or similar.
-// Better to just require it if we can, but with ES modules we use fs.
-const serviceAccountPath = path.resolve(__dirname, '../config/firebase-service-account.json');
-
-// Check if initialized to prevent error
-if (admin.apps.length === 0) {
-    try {
-        const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, 'utf8'));
-        admin.initializeApp({
-            credential: admin.credential.cert(serviceAccount),
-        });
-        console.log('Firebase initialized successfully');
-    } catch (error) {
-        console.error('Error initializing Firebase:', error);
-    }
-}
-
-const db = admin.firestore();
-
+const db = getFirestore();
+const messaging = getMessaging();
 
 // Validation helper
 const validateNotificationPayload = (
@@ -54,7 +28,7 @@ const validateNotificationPayload = (
 
 const sendFCMNotification = async (message: admin.messaging.Message): Promise<string> => {
     try {
-        return await admin.messaging().send(message);
+        return await messaging.send(message);
     } catch (error: any) {
         console.error('FCM send error:', error);
         throw new Error(`Failed to send FCM notification: ${error.message}`);
@@ -125,15 +99,6 @@ export const sendBroadcast = async (req: any, res: Response): Promise<void> => {
         };
 
         await sendFCMNotification(message);
-
-        // Storing for all users in Firestore is expensive and slow if done sequentially.
-        // The reference code used batch writes. We will skip deep implementation of batch writes for optimization
-        // unless strictly required, as it involves fetching all users. 
-        // Optimization: Since we are using "topic" messaging for broadcast, FCM handles delivery.
-        // Storing in individual user subcollections is for history.
-        // If the valid users list is huge, this operation times out.
-        // We will initiate the FCM send and just log it for now, or implement a background job if we had one.
-        // For this task, we'll stick to basic FCM send which is the critical part for "working".
 
         await createAuditLog(req, 'CREATE', 'Notification', `Sent broadcast notification. Title: ${title}`, undefined, null, undefined, null, { title, body, type, data });
 
