@@ -3,8 +3,7 @@ import express from 'express';
 import multer from 'multer';
 import * as PopupController from '../controllers/popup.controller.js';
 
-import os from 'os';
-const upload = multer({ dest: process.env.VERCEL ? os.tmpdir() : 'uploads/' });
+const upload = multer({ dest: 'uploads/' });
 const router = express.Router();
 
 router.get('/popups', PopupController.getPopups);

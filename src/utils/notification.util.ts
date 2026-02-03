@@ -1,8 +1,27 @@
-import { getFirestore, getMessaging } from './firebase.js';
-import admin from 'firebase-admin';
 
-const db = getFirestore();
-const messaging = getMessaging();
+import admin from 'firebase-admin';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const serviceAccountPath = path.resolve(__dirname, '../config/firebase-service-account.json');
+
+if (admin.apps.length === 0) {
+    try {
+        const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, 'utf8'));
+        admin.initializeApp({
+            credential: admin.credential.cert(serviceAccount),
+        });
+        console.log('Firebase initialized successfully from util');
+    } catch (error) {
+        console.error('Error initializing Firebase from util:', error);
+    }
+}
+
+const db = admin.firestore();
 
 export const sendNotification = async (userId: string, title: string, body: string, type: string = 'general', data: any = {}) => {
     try {
@@ -18,7 +37,7 @@ export const sendNotification = async (userId: string, title: string, body: stri
             topic: userId,
         };
 
-        await messaging.send(message);
+        await admin.messaging().send(message);
 
         await db.collection('users').doc(userId).collection('notifications').add({
             title,

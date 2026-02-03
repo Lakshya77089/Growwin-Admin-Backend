@@ -3,8 +3,7 @@ import express from 'express';
 import multer from 'multer';
 import * as TicketController from '../controllers/ticket.controller.js';
 
-import os from 'os';
-const upload = multer({ dest: process.env.VERCEL ? os.tmpdir() : 'uploads/tickets/' });
+const upload = multer({ dest: 'uploads/tickets/' });
 const router = express.Router();
 
 // Match frontend: /api/adminTicket/tickets/...
