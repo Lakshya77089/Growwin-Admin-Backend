@@ -16,6 +16,7 @@ import adminRoleRoutes from "./routes/adminRole.routes.js";
 import blogRoutes from "./routes/blog.routes.js";
 import adminloginRoutes from "./routes/adminlogin.routes.js";
 import auditLogRoutes from "./routes/auditLog.routes.js";
+import rankRoutes from "./routes/rank.routes.js";
 
 const app = express();
 const PORT = process.env["PORT"] || 3000;
@@ -44,6 +45,7 @@ app.use("/api/roles", adminRoleRoutes);
 app.use("/api/blogs", blogRoutes);
 app.use("/api/adminlogin", adminloginRoutes);
 app.use("/api/audit-logs", auditLogRoutes);
+app.use("/api/rank", rankRoutes);
 app.use("/api/email", mailerRoutes);
 app.use("/", notificationRoutes);
 
