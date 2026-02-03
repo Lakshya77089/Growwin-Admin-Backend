@@ -21,6 +21,13 @@ export class BackupService {
         try {
             console.log('Initializing BackupService...');
 
+            // Skip directory creation on Vercel
+            if (process.env.VERCEL) {
+                console.log('Skipping backup directory creation on Vercel');
+                this.isInitialized = true;
+                return;
+            }
+
             // ensure backup directories exist
             ['manual', 'daily', 'weekly', 'monthly'].forEach(type => {
                 const dir = path.join(this.backupDir, type);
